@@ -50,6 +50,10 @@ class TranscriptionController extends Controller
             return response()->json(['message' => 'Falha ao gerar anamnese/insights'], 422);
         }
 
+        $flags = $this->normalizeFlags($insights['dynamic_flags'] ?? []);
+        $questions = $this->normalizeQuestions($insights['missing_questions'] ?? []);
+        $summary = $this->makeSummary($insights['anamnesis'] ?? $prepared);
+
         $consultationData = null;
         if (! empty($validated['consultation_id'])) {
             $consultation = Consultation::find($validated['consultation_id']);
@@ -65,14 +69,14 @@ class TranscriptionController extends Controller
                 $audioFiles[] = $audioEntry;
 
                 $metadata = $consultation->metadata ?? [];
-                $metadata['missingQuestions'] = $insights['missing_questions'] ?? [];
-                $metadata['flags'] = $insights['dynamic_flags'] ?? [];
+                $metadata['missingQuestions'] = $questions;
+                $metadata['flags'] = $flags;
                 $metadata['audioSegments'] = $audio['segments'] ?? [];
 
                 $consultation->fill([
                     'transcription' => $prepared,
                     'anamnesis' => $insights['anamnesis'] ?? null,
-                    'summary' => $this->makeSummary($insights['anamnesis'] ?? $prepared),
+                    'summary' => $summary,
                     'status' => 'transcription',
                     'current_step' => 'transcription',
                     'audio_files' => $audioFiles,
@@ -88,8 +92,9 @@ class TranscriptionController extends Controller
             'audio' => $audio,
             'transcription' => $prepared,
             'anamnesis' => $insights['anamnesis'] ?? null,
-            'missingQuestions' => $insights['missing_questions'] ?? [],
-            'flags' => $insights['dynamic_flags'] ?? [],
+            'summary' => $summary,
+            'missingQuestions' => $questions,
+            'flags' => $flags,
             'consultation' => $consultationData,
         ]);
     }
@@ -99,5 +104,59 @@ class TranscriptionController extends Controller
         $plain = trim(strip_tags($text));
         return Str::limit($plain, 255);
     }
-}
 
+    private function normalizeFlags(array $flags): array
+    {
+        $mapSeverity = [
+            'critica' => 'red',
+            'alta' => 'orange',
+            'moderada' => 'yellow',
+            'baixa' => 'gray',
+            'red' => 'red',
+            'orange' => 'orange',
+            'yellow' => 'yellow',
+            'gray' => 'gray',
+        ];
+
+        $mapType = [
+            'clinico' => 'clinical',
+            'juridico' => 'legal',
+            'cognitivo' => 'clinical',
+            'polifarmacia' => 'drug',
+        ];
+
+        return collect($flags)->map(function ($flag, $index) use ($mapSeverity, $mapType) {
+            return [
+                'id' => $flag['id'] ?? 'flag_' . ($index + 1),
+                'title' => $flag['title'] ?? 'Alerta',
+                'severity' => $mapSeverity[strtolower($flag['severity'] ?? '')] ?? 'yellow',
+                'details' => $flag['details'] ?? '',
+                'suggestion' => $flag['suggestion'] ?? '',
+                'category' => $mapType[strtolower($flag['type'] ?? '')] ?? 'clinical',
+            ];
+        })->values()->all();
+    }
+
+    private function normalizeQuestions(array $questions): array
+    {
+        return collect($questions)->map(function ($q, $index) {
+            if (is_string($q)) {
+                return [
+                    'id' => 'q_' . ($index + 1),
+                    'text' => $q,
+                    'category' => 'general',
+                    'priority' => 'medium',
+                    'isDone' => false,
+                ];
+            }
+
+            return [
+                'id' => $q['id'] ?? 'q_' . ($index + 1),
+                'text' => $q['text'] ?? '',
+                'category' => $q['category'] ?? 'general',
+                'priority' => $q['priority'] ?? 'medium',
+                'isDone' => $q['isDone'] ?? false,
+            ];
+        })->filter(fn ($q) => ! empty($q['text']))->values()->all();
+    }
+}
