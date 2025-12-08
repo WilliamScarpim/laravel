@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Consultation;
 use App\Models\ConsultationAuditLog;
+use App\Models\Document;
 use Illuminate\Support\Arr;
 
 class ConsultationAuditService
@@ -42,6 +43,38 @@ class ConsultationAuditService
 
         ConsultationAuditLog::create([
             'consultation_id' => $consultation->id,
+            'user_id' => $userId,
+            'action' => $action,
+            'changes' => $entries,
+        ]);
+    }
+
+    /**
+     * Registra alterações em documentos associados a uma consulta.
+     */
+    public function recordDocument(Document $document, ?string $userId, string $action, array $changes): void
+    {
+        if (empty($changes)) {
+            return;
+        }
+
+        $entries = array_map(function ($change) use ($document) {
+            $field = $change['field'] ?? 'document';
+
+            return [
+                'field' => sprintf(
+                    '%s.document.%s.%s',
+                    $field,
+                    (string) $document->type,
+                    (string) $document->id
+                ),
+                'before' => $change['before'] ?? null,
+                'after' => $change['after'] ?? null,
+            ];
+        }, $changes);
+
+        ConsultationAuditLog::create([
+            'consultation_id' => $document->consultation_id,
             'user_id' => $userId,
             'action' => $action,
             'changes' => $entries,

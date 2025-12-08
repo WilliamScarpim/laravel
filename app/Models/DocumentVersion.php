@@ -6,26 +6,34 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class Document extends Model
+class DocumentVersion extends Model
 {
-    use HasFactory, HasUlids;
+    use HasFactory;
+    use HasUlids;
 
     protected $fillable = [
+        'document_id',
         'consultation_id',
+        'user_id',
+        'version',
         'type',
         'title',
         'content',
     ];
+
+    public function document(): BelongsTo
+    {
+        return $this->belongsTo(Document::class);
+    }
 
     public function consultation(): BelongsTo
     {
         return $this->belongsTo(Consultation::class);
     }
 
-    public function versions(): HasMany
+    public function author(): BelongsTo
     {
-        return $this->hasMany(DocumentVersion::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 }
