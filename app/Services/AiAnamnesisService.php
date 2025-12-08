@@ -307,42 +307,50 @@ Ao concluir, responda **somente** com um JSON válido contendo as chaves listada
 
 PROMPT;
 
-        try {
-            $this->logDebug('[AI] Gerando anamnese e insights', [
-                'transcription_length' => mb_strlen($transcription),
-            ]);
+        $this->logDebug('[AI] Gerando anamnese e insights', [
+            'transcription_length' => mb_strlen($transcription),
+        ]);
 
-            $response = $this->chatRequest([
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $transcription],
-            ], timeout: (int) env('AI_HTTP_TIMEOUT', 600));
+        return $this->runAnamnesisPrompt([
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => $transcription],
+        ], (int) env('AI_HTTP_TIMEOUT', 600));
+    }
 
-            $content = $response['choices'][0]['message']['content'] ?? '{}';
-            $decoded = json_decode($content, true);
-
-            if (! is_array($decoded)) {
-                throw new \RuntimeException('Não foi possível interpretar a anamnese/insights.');
-            }
-
-            $this->logDebug('[AI] Anamnese estruturada retornada', [
-                'anamnesis_length' => mb_strlen((string) ($decoded['anamnesis'] ?? '')),
-                'missing_questions' => count($decoded['missing_questions'] ?? []),
-                'dynamic_flags' => count($decoded['dynamic_flags'] ?? []),
-            ]);
-
-            return [
-                'anamnesis' => (string) ($decoded['anamnesis'] ?? ''),
-                'summary' => (string) ($decoded['summary'] ?? ''),
-                'missing_questions' => array_values(array_filter($decoded['missing_questions'] ?? [])),
-                'dynamic_flags' => array_values(array_filter($decoded['dynamic_flags'] ?? [])),
-            ];
-        } catch (\Throwable $exception) {
-            Log::error('[AI] Erro ao gerar anamnese e insights', [
-                'message' => $exception->getMessage(),
-            ]);
-
-            return null;
+    public function mergeWithExisting(string $existingAnamnesis, string $newTranscription): ?array
+    {
+        if (trim($existingAnamnesis) === '') {
+            return $this->buildAnamnesisAndInsights($newTranscription);
         }
+
+        $systemPrompt = <<<PROMPT
+Você é o mesmo especialista responsável pelas regras anteriores. Recebe duas entradas:
+
+1. A ÚLTIMA ANAMNESE salva (texto oficial atual);
+2. A NOVA TRANSCRIÇÃO (delta gravado após as perguntas pendentes).
+
+Objetivo:
+- Reescrever a anamnese consolidando texto oficial + novas informações;
+- Manter a mesma estrutura e seções obrigatórias definidas anteriormente;
+- Atualizar o resumo e as listas de perguntas/flags;
+- Remover duplicidades e destacar apenas mudanças válidas;
+- Nunca descartar informações pré-existentes sem justificativa.
+
+Devolva o mesmo JSON usado anteriormente com `anamnesis`, `summary`, `missing_questions`, `dynamic_flags`.
+PROMPT;
+
+        $payload = <<<CONTENT
+ANAMNESE_ATUAL:
+{$existingAnamnesis}
+
+NOVA_TRANSCRICAO:
+{$newTranscription}
+CONTENT;
+
+        return $this->runAnamnesisPrompt([
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => $payload],
+        ], (int) env('AI_HTTP_TIMEOUT', 600));
     }
 
     public function runClinicalChat(string $anamnesis, string $message, array $history = []): string
@@ -551,5 +559,37 @@ PROMPT;
                 'content_preview' => $this->truncate((string) ($message['content'] ?? ''), 400),
             ];
         }, $choices);
+    }
+
+    private function runAnamnesisPrompt(array $messages, ?int $timeout = null): ?array
+    {
+        try {
+            $response = $this->chatRequest($messages, timeout: $timeout);
+            $content = $response['choices'][0]['message']['content'] ?? '{}';
+            $decoded = json_decode($content, true);
+
+            if (! is_array($decoded)) {
+                throw new \RuntimeException('Não foi possível interpretar a anamnese/insights.');
+            }
+
+            $this->logDebug('[AI] Anamnese estruturada retornada', [
+                'anamnesis_length' => mb_strlen((string) ($decoded['anamnesis'] ?? '')),
+                'missing_questions' => count($decoded['missing_questions'] ?? []),
+                'dynamic_flags' => count($decoded['dynamic_flags'] ?? []),
+            ]);
+
+            return [
+                'anamnesis' => (string) ($decoded['anamnesis'] ?? ''),
+                'summary' => (string) ($decoded['summary'] ?? ''),
+                'missing_questions' => array_values(array_filter($decoded['missing_questions'] ?? [])),
+                'dynamic_flags' => array_values(array_filter($decoded['dynamic_flags'] ?? [])),
+            ];
+        } catch (\Throwable $exception) {
+            Log::error('[AI] Erro ao gerar anamnese e insights', [
+                'message' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 }

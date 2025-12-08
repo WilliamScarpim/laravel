@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Consultation extends Model
 {
@@ -44,5 +45,32 @@ class Consultation extends Model
     public function documents(): HasMany
     {
         return $this->hasMany(Document::class);
+    }
+
+    public function anamnesisVersions(): HasMany
+    {
+        return $this->hasMany(AnamnesisVersion::class);
+    }
+
+    public function auditLogs(): HasMany
+    {
+        return $this->hasMany(ConsultationAuditLog::class);
+    }
+
+    public function jobs(): HasMany
+    {
+        return $this->hasMany(ConsultationJob::class);
+    }
+
+    public function pendingJob(): HasOne
+    {
+        return $this->hasOne(ConsultationJob::class)
+            ->whereIn('status', ['queued', 'processing'])
+            ->ofMany('created_at', 'max');
+    }
+
+    public function latestJob(): HasOne
+    {
+        return $this->hasOne(ConsultationJob::class)->latestOfMany();
     }
 }

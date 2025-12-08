@@ -3,3 +3,6 @@ password
 
 
 npm run dev
+
+
+php artisan queue:work

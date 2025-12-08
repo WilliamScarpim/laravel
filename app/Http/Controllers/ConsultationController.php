@@ -3,15 +3,26 @@
 namespace App\Http\Controllers;
 
 use App\Models\Consultation;
+use App\Models\ConsultationJob;
 use App\Models\Patient;
+use App\Services\AnamnesisVersionService;
+use App\Services\ConsultationAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
 class ConsultationController extends Controller
 {
+    public function __construct(
+        private readonly ConsultationAuditService $auditService,
+        private readonly AnamnesisVersionService $versionService
+    ) {
+    }
+
     public function index(Request $request)
     {
-        $query = Consultation::with(['patient', 'doctor'])
+        $query = Consultation::with(['patient', 'doctor', 'pendingJob', 'latestJob'])
+            ->withCount('anamnesisVersions')
+            ->withMax('anamnesisVersions as anamnesis_version', 'version')
             ->orderByDesc('date')
             ->orderByDesc('created_at');
 
@@ -53,7 +64,16 @@ class ConsultationController extends Controller
 
     public function show(string $id)
     {
-        $consultation = Consultation::with(['patient', 'doctor', 'documents'])->find($id);
+        $consultation = Consultation::with([
+            'patient',
+            'doctor',
+            'documents',
+            'pendingJob',
+            'latestJob',
+        ])
+            ->withCount('anamnesisVersions')
+            ->withMax('anamnesisVersions as anamnesis_version', 'version')
+            ->find($id);
 
         if (! $consultation) {
             return response()->json(['message' => 'Consulta não encontrada'], 404);
@@ -69,7 +89,7 @@ class ConsultationController extends Controller
             'patientId' => ['required', 'string', 'exists:patients,id'],
             'transcription' => ['nullable', 'string'],
             'anamnesis' => ['nullable', 'string'],
-            'summary' => ['nullable', 'string', 'max:255'],
+            'summary' => ['nullable', 'string'],
             'status' => ['nullable', 'string'],
             'currentStep' => ['nullable', 'string'],
             'metadata' => ['nullable', 'array'],
@@ -82,6 +102,7 @@ class ConsultationController extends Controller
 
         if (! empty($data['consultationId'])) {
             $consultation = Consultation::findOrFail($data['consultationId']);
+            $original = $consultation->getOriginal();
             $consultation->fill([
                 'patient_id' => $patient->id,
                 'doctor_id' => $request->user()->id,
@@ -92,7 +113,16 @@ class ConsultationController extends Controller
                 'current_step' => $step ?? $consultation->current_step,
                 'metadata' => $data['metadata'] ?? $consultation->metadata,
                 'audio_files' => $data['audioFiles'] ?? $consultation->audio_files,
-            ])->save();
+            ]);
+
+            $changedFields = array_keys($consultation->getDirty());
+            if (! empty($changedFields)) {
+                $consultation->save();
+                $this->auditService->record($consultation, $original, (string) $request->user()->id);
+                if (in_array('anamnesis', $changedFields, true)) {
+                    $this->versionService->record($consultation, (string) $request->user()->id, $consultation->metadata ?? []);
+                }
+            }
         } else {
             $consultation = Consultation::create([
                 'patient_id' => $patient->id,
@@ -106,6 +136,9 @@ class ConsultationController extends Controller
                 'metadata' => $data['metadata'] ?? null,
                 'audio_files' => $data['audioFiles'] ?? null,
             ]);
+            if (! empty($data['anamnesis'])) {
+                $this->versionService->record($consultation, (string) $request->user()->id, $consultation->metadata ?? []);
+            }
         }
 
         $consultation->load(['patient', 'doctor']);
@@ -120,7 +153,7 @@ class ConsultationController extends Controller
             'patientId' => ['nullable', 'string', 'exists:patients,id'],
             'transcription' => ['nullable', 'string'],
             'anamnesis' => ['nullable', 'string'],
-            'summary' => ['nullable', 'string', 'max:255'],
+            'summary' => ['nullable', 'string'],
             'status' => ['nullable', 'string'],
             'currentStep' => ['nullable', 'string'],
             'metadata' => ['nullable', 'array'],
@@ -131,6 +164,8 @@ class ConsultationController extends Controller
             $consultation->patient_id = $data['patientId'];
         }
 
+        $original = $consultation->getOriginal();
+
         foreach (['transcription', 'anamnesis', 'summary', 'status', 'currentStep', 'metadata', 'audioFiles'] as $field) {
             $snake = $field === 'currentStep' ? 'current_step' : $field;
             if (array_key_exists($field, $data)) {
@@ -138,7 +173,16 @@ class ConsultationController extends Controller
             }
         }
 
+        $changedFields = array_keys($consultation->getDirty());
         $consultation->save();
+
+        if (! empty($changedFields)) {
+            $this->auditService->record($consultation, $original, (string) $request->user()->id);
+            if (in_array('anamnesis', $changedFields, true)) {
+                $this->versionService->record($consultation, (string) $request->user()->id, $consultation->metadata ?? []);
+            }
+        }
+
         $consultation->load(['patient', 'doctor']);
 
         return response()->json(['data' => $this->transform($consultation)]);
@@ -147,10 +191,13 @@ class ConsultationController extends Controller
     public function complete(string $id)
     {
         $consultation = Consultation::findOrFail($id);
+        $original = $consultation->getOriginal();
         $consultation->status = 'completed';
         $consultation->current_step = 'complete';
         $this->cleanupAudio($consultation);
         $consultation->save();
+
+        $this->auditService->record($consultation, $original, (string) $request->user()->id, 'complete');
 
         $consultation->load(['patient', 'doctor']);
 
@@ -186,6 +233,30 @@ class ConsultationController extends Controller
             'audioFiles' => $consultation->audio_files,
             'createdAt' => optional($consultation->created_at)->toIso8601String(),
             'updatedAt' => optional($consultation->updated_at)->toIso8601String(),
+            'processing' => $this->transformProcessing($consultation),
+            'anamnesisVersion' => [
+                'current' => (int) ($consultation->anamnesis_version ?? 0),
+                'total' => (int) ($consultation->anamnesis_versions_count ?? 0),
+            ],
+        ];
+    }
+
+    private function transformProcessing(Consultation $consultation): ?array
+    {
+        /** @var ConsultationJob|null $job */
+        $job = $consultation->pendingJob ?? $consultation->latestJob;
+
+        if (! $job) {
+            return null;
+        }
+
+        return [
+            'jobId' => (string) $job->id,
+            'status' => $job->status,
+            'step' => $job->current_step,
+            'progress' => (int) $job->progress,
+            'queuePosition' => (int) $job->queue_position,
+            'updatedAt' => optional($job->updated_at)->toIso8601String(),
         ];
     }
 
