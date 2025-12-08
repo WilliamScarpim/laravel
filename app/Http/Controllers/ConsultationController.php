@@ -116,7 +116,6 @@ class ConsultationController extends Controller
     public function update(Request $request, string $id)
     {
         $consultation = Consultation::findOrFail($id);
-
         $data = $request->validate([
             'patientId' => ['nullable', 'string', 'exists:patients,id'],
             'transcription' => ['nullable', 'string'],

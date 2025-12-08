@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Consultation;
 use App\Models\Document;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class DocumentController extends Controller
 {
@@ -31,6 +32,40 @@ class DocumentController extends Controller
         $doc = $consultation->documents()->create($data);
 
         return response()->json(['data' => $this->transform($doc)], 201);
+    }
+
+    public function patch(Request $request, string $consultationId)
+    {
+        $consultation = Consultation::findOrFail($consultationId);
+
+        $data = $request->validate([
+            'id' => ['nullable', 'string'],
+            'type' => ['required_without:id', 'string'],
+            'title' => ['nullable', 'string', 'max:255'],
+            'content' => ['required', 'string'],
+        ]);
+
+        if (! empty($data['id'])) {
+            $doc = $consultation->documents()->where('id', $data['id'])->firstOrFail();
+        } else {
+            $doc = $consultation->documents()->where('type', $data['type'])->first();
+            if (! $doc) {
+                $doc = $consultation->documents()->create([
+                    'type' => $data['type'],
+                    'title' => $data['title'] ?? Str::of($data['type'])->replace('_', ' ')->title()->value(),
+                    'content' => ''
+                ]);
+            }
+        }
+
+        if (array_key_exists('title', $data) && $data['title'] !== null) {
+            $doc->title = $data['title'];
+        }
+
+        $doc->content = $data['content'];
+        $doc->save();
+
+        return response()->json(['data' => $this->transform($doc)]);
     }
 
     public function update(Request $request, string $id)

@@ -13,7 +13,7 @@ Route::post('/login', [AuthController::class, 'login']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::get('/me', [AuthController::class, 'me']);
+    Route::match(['get', 'patch'], '/me', [AuthController::class, 'me']);
 
     // Patients
     Route::get('/patients/search', [PatientController::class, 'search']);
@@ -29,6 +29,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Documents
     Route::get('/consultations/{id}/documents', [DocumentController::class, 'index']);
     Route::post('/consultations/{id}/documents', [DocumentController::class, 'store']);
+    Route::patch('/consultations/{id}/documents', [DocumentController::class, 'patch']);
     Route::put('/documents/{id}', [DocumentController::class, 'update']);
 
     // AI helpers
