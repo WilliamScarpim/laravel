@@ -15,6 +15,9 @@ class ConsultationController extends Controller
             ->orderByDesc('date')
             ->orderByDesc('created_at');
 
+        $perPage = max(5, min(100, (int) $request->query('perPage', 20)));
+        $page = max(1, (int) $request->query('page', 1));
+
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('summary', 'like', "%{$search}%")
@@ -32,10 +35,19 @@ class ConsultationController extends Controller
             $query->whereDate('date', '<=', $to);
         }
 
-        $consultations = $query->get();
+        $consultations = $query->paginate($perPage, ['*'], 'page', $page);
 
         return response()->json([
-            'data' => $consultations->map(fn ($c) => $this->transform($c))->values(),
+            'data' => $consultations
+                ->getCollection()
+                ->map(fn ($c) => $this->transform($c))
+                ->values(),
+            'meta' => [
+                'current_page' => $consultations->currentPage(),
+                'per_page' => $consultations->perPage(),
+                'total' => $consultations->total(),
+                'last_page' => $consultations->lastPage(),
+            ],
         ]);
     }
 

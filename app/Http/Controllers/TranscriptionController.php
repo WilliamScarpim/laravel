@@ -52,7 +52,8 @@ class TranscriptionController extends Controller
 
         $flags = $this->normalizeFlags($insights['dynamic_flags'] ?? []);
         $questions = $this->normalizeQuestions($insights['missing_questions'] ?? []);
-        $summary = $this->makeSummary($insights['anamnesis'] ?? $prepared);
+        $summarySource = $insights['summary'] ?? $insights['anamnesis'] ?? $prepared;
+        $summary = $this->makeSummary($summarySource);
 
         $consultationData = null;
         if (! empty($validated['consultation_id'])) {
@@ -99,10 +100,13 @@ class TranscriptionController extends Controller
         ]);
     }
 
-    private function makeSummary(string $text): string
+    private function makeSummary(string $text, int $wordLimit = 50): string
     {
         $plain = trim(strip_tags($text));
-        return Str::limit($plain, 255);
+        if ($plain === '') {
+            return '';
+        }
+        return Str::words($plain, $wordLimit, '');
     }
 
     private function normalizeFlags(array $flags): array

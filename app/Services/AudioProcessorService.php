@@ -222,12 +222,23 @@ class AudioProcessorService
 
         $this->disk()->makeDirectory($outDirRel);
 
-        $cmd = sprintf(
-            'ffmpeg -i %s -f segment -segment_time %d -c copy %s',
-            escapeshellarg($abs),
-            $segmentSec,
-            escapeshellarg($outDirAbs . '/chunk_%03d.ogg')
-        );
+        $segmentPattern = $outDirAbs . '/chunk_%03d.ogg';
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $cmd = sprintf(
+                'powershell -NoProfile -Command "& {ffmpeg -i %s -f segment -segment_time %d -c copy %s}"',
+                escapeshellarg($abs),
+                $segmentSec,
+                escapeshellarg($segmentPattern)
+            );
+        } else {
+            $cmd = sprintf(
+                'ffmpeg -i %s -f segment -segment_time %d -c copy %s',
+                escapeshellarg($abs),
+                $segmentSec,
+                escapeshellarg($segmentPattern)
+            );
+        }
 
         $this->run($cmd, 'Erro ao dividir por duração');
 
@@ -247,4 +258,3 @@ class AudioProcessorService
         return $segments;
     }
 }
-

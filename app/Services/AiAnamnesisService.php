@@ -54,6 +54,16 @@ class AiAnamnesisService
         $tries       = max(1, (int) env('AI_HTTP_TRIES', 3));
         $backoffMs   = (int) env('AI_HTTP_BACKOFF_MS', 1500);
 
+        $this->logDebug('[AI] Solicitando transcrição de áudio', [
+            'path'            => $relativePath,
+            'model'           => $model,
+            'language'        => $language,
+            'timeout'         => $timeout,
+            'connect_timeout' => $connectTime,
+            'tries'           => $tries,
+            'backoff_ms'      => $backoffMs,
+        ]);
+
         $handle = fopen($absolutePath, 'r');
         if ($handle === false) {
             Log::error('[AI] Não foi possível abrir o arquivo para transcrição', [
@@ -85,6 +95,12 @@ class AiAnamnesisService
 
             $payload = $response->json();
             $text    = is_array($payload) ? ($payload['text'] ?? '') : '';
+
+            $this->logDebug('[AI] Resposta da transcrição', [
+                'path'         => $relativePath,
+                'text_length'  => mb_strlen($text),
+                'text_preview' => $this->truncate($text, 400),
+            ]);
 
             return trim((string) $text) ?: null;
         } catch (ConnectionException|RequestException $exception) {
@@ -127,6 +143,14 @@ class AiAnamnesisService
             }
         }
 
+        if ($finalTranscript !== '') {
+            $this->logDebug('[AI] Transcrição de múltiplos segmentos concluída', [
+                'segments'     => count($relativePaths),
+                'text_length'  => mb_strlen($finalTranscript),
+                'text_preview' => $this->truncate($finalTranscript, 400),
+            ]);
+        }
+
         return $finalTranscript !== '' ? $finalTranscript : null;
     }
 
@@ -139,12 +163,27 @@ class AiAnamnesisService
             return $transcription;
         }
 
+        $this->logDebug('[AI] Preparando transcrição para gerar anamnese', [
+            'original_word_count' => $wordCount,
+            'max_words' => $maxWords,
+            'chunked' => $wordCount > $maxWords,
+        ]);
+
         $chunks    = $this->chunkTranscriptByWords($transcription, max(500, $maxWords - 500));
         $summaries = [];
 
         foreach ($chunks as $index => $chunk) {
+            $this->logDebug('[AI] Resumo de chunk solicitado', [
+                'chunk_index' => $index + 1,
+                'chunks_total' => count($chunks),
+                'chunk_preview' => $this->truncate($chunk, 400),
+            ]);
             $summary = $this->summarizeTranscriptChunk($chunk, $index + 1, count($chunks));
             if ($summary) {
+                $this->logDebug('[AI] Resumo de chunk recebido', [
+                    'chunk_index' => $index + 1,
+                    'summary_preview' => $this->truncate($summary, 400),
+                ]);
                 $summaries[] = $summary;
             }
         }
@@ -174,7 +213,8 @@ Ao receber cada nova parte da transcrição, você deve:
 4. Identificar riscos combinados  
 5. Sintetizar achados essenciais com foco clínico-defensivo  
 6. Atualizar o estado da consulta  
-7. Produzir uma anamnese técnica baseada **exclusivamente** na transcrição
+7. Produzir uma anamnese técnica baseada **exclusivamente** na transcrição  
+8. Gerar um resumo conciso de **no máximo 50 palavras** que cubra toda a anamnese e disponibilizá-lo como o campo `summary`
 
 ---
 
@@ -245,9 +285,33 @@ Cada alerta deve seguir o formato:
   "suggestion": "Orientação prática para o médico"
 }
 
+---
+
+# FORMATO DE SAÍDA
+
+Ao concluir, responda **somente** com um JSON válido contendo as chaves listadas abaixo, e não inclua nenhum texto adicional fora do objeto.
+
+```json
+{
+  "anamnesis": "...",
+  "summary": "...",
+  "missing_questions": ["..."],
+  "dynamic_flags": [{ ... }]
+}
+```
+
+- `anamnesis`: texto em Markdown com as seções obrigatórias descritas acima;
+- `summary`: parágrafo ou frase única de até 50 palavras que resume toda a anamnese (sem formatação Markdown extra);
+- `missing_questions`: lista de strings ou objetos (com `text`, `id`, `category`, `priority`), cada um justificando por que a pergunta é necessária;
+- `dynamic_flags`: lista de objetos seguindo o formato informado anteriormente (`type`, `severity`, `title`, `details`, `suggestion`).
+
 PROMPT;
 
         try {
+            $this->logDebug('[AI] Gerando anamnese e insights', [
+                'transcription_length' => mb_strlen($transcription),
+            ]);
+
             $response = $this->chatRequest([
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $transcription],
@@ -260,8 +324,15 @@ PROMPT;
                 throw new \RuntimeException('Não foi possível interpretar a anamnese/insights.');
             }
 
+            $this->logDebug('[AI] Anamnese estruturada retornada', [
+                'anamnesis_length' => mb_strlen((string) ($decoded['anamnesis'] ?? '')),
+                'missing_questions' => count($decoded['missing_questions'] ?? []),
+                'dynamic_flags' => count($decoded['dynamic_flags'] ?? []),
+            ]);
+
             return [
                 'anamnesis' => (string) ($decoded['anamnesis'] ?? ''),
+                'summary' => (string) ($decoded['summary'] ?? ''),
                 'missing_questions' => array_values(array_filter($decoded['missing_questions'] ?? [])),
                 'dynamic_flags' => array_values(array_filter($decoded['dynamic_flags'] ?? [])),
             ];
@@ -374,6 +445,14 @@ PROMPT;
         $model   = $model ?? env('AI_COMPLETION_MODEL', 'gpt-5-nano');
         $timeout = $timeout ?? (int) env('AI_HTTP_TIMEOUT', 120);
 
+        if ($this->isDebugEnabled()) {
+            $this->logDebug('[AI] Chat request', [
+                'model'    => $model,
+                'timeout'  => $timeout,
+                'messages' => $this->sanitizeMessages($messages),
+            ]);
+        }
+
         $response = Http::withToken($this->getApiKey())
             ->acceptJson()
             ->timeout($timeout)
@@ -383,7 +462,15 @@ PROMPT;
             ])
             ->throw();
 
-        return $response->json();
+        $payload = $response->json();
+
+        $this->logDebug('[AI] Chat response', [
+            'model'    => $model,
+            'choices'  => $this->summarizeChoices($payload['choices'] ?? []),
+            'usage'    => $payload['usage'] ?? null,
+        ]);
+
+        return $payload;
     }
 
     private function shouldRetryRequest(\Throwable $exception): bool
@@ -410,5 +497,59 @@ PROMPT;
 
         return $key;
     }
-}
 
+    private function logDebug(string $message, array $context = []): void
+    {
+        if (! $this->isDebugEnabled()) {
+            return;
+        }
+
+        Log::debug($message, $context);
+    }
+
+    private function isDebugEnabled(): bool
+    {
+        static $enabled;
+
+        if ($enabled === null) {
+            $enabled = (bool) env('AI_DEBUG_LOG', false);
+        }
+
+        return $enabled;
+    }
+
+    private function truncate(string $value, int $limit = 400): string
+    {
+        if ($value === '') {
+            return '';
+        }
+
+        if ($limit <= 0) {
+            return $value;
+        }
+
+        return mb_strlen($value) > $limit ? mb_substr($value, 0, $limit) . '…' : $value;
+    }
+
+    private function sanitizeMessages(array $messages): array
+    {
+        return array_map(function ($message) {
+            return [
+                'role' => $message['role'] ?? 'unknown',
+                'content_preview' => $this->truncate((string) ($message['content'] ?? ''), 400),
+            ];
+        }, $messages);
+    }
+
+    private function summarizeChoices(array $choices): array
+    {
+        return array_map(function ($choice) {
+            $message = $choice['message'] ?? [];
+            return [
+                'index' => $choice['index'] ?? null,
+                'role' => $message['role'] ?? null,
+                'content_preview' => $this->truncate((string) ($message['content'] ?? ''), 400),
+            ];
+        }, $choices);
+    }
+}

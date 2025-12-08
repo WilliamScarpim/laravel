@@ -32,6 +32,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/documents/{id}', [DocumentController::class, 'update']);
 
     // AI helpers
+    Route::get('/audio/test-files', [AudioController::class, 'testFiles']);
+    Route::get('/audio/test-files/{file}', [AudioController::class, 'getTestFile']);
     Route::post('/audio/process', [AudioController::class, 'process']);
     Route::post('/transcribe', [TranscriptionController::class, 'transcribe']);
     Route::post('/chat', [ChatController::class, 'respond']);
