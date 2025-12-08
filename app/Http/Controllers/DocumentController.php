@@ -30,6 +30,7 @@ class DocumentController extends Controller
     public function store(Request $request, string $consultationId)
     {
         $consultation = Consultation::findOrFail($consultationId);
+        $this->assertDocumentsAreEditable($consultation);
 
         $data = $request->validate([
             'type' => ['required', 'string'],
@@ -52,6 +53,7 @@ class DocumentController extends Controller
     public function patch(Request $request, string $consultationId)
     {
         $consultation = Consultation::findOrFail($consultationId);
+        $this->assertDocumentsAreEditable($consultation);
 
         $data = $request->validate([
             'id' => ['nullable', 'string'],
@@ -102,6 +104,9 @@ class DocumentController extends Controller
     public function update(Request $request, string $id)
     {
         $doc = Document::findOrFail($id);
+        $doc->loadMissing('consultation');
+        $consultation = $doc->consultation ?? Consultation::findOrFail($doc->consultation_id);
+        $this->assertDocumentsAreEditable($consultation);
 
         $data = $request->validate([
             'title' => ['nullable', 'string', 'max:255'],
@@ -161,5 +166,25 @@ class DocumentController extends Controller
         }
 
         return $changes;
+    }
+
+    private function assertDocumentsAreEditable(Consultation $consultation): void
+    {
+        if ($this->documentsAreLocked($consultation)) {
+            abort(403, 'Documentos bloqueados para esta consulta.');
+        }
+    }
+
+    private function documentsAreLocked(Consultation $consultation): bool
+    {
+        if ($consultation->status !== 'completed') {
+            return false;
+        }
+
+        if (! $consultation->completed_at) {
+            return false;
+        }
+
+        return $consultation->completed_at->lt(now()->subDay());
     }
 }

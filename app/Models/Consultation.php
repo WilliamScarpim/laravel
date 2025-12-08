@@ -24,12 +24,14 @@ class Consultation extends Model
         'current_step',
         'metadata',
         'audio_files',
+        'completed_at',
     ];
 
     protected $casts = [
         'metadata' => 'array',
         'audio_files' => 'array',
         'date' => 'date',
+        'completed_at' => 'datetime',
     ];
 
     public function patient(): BelongsTo

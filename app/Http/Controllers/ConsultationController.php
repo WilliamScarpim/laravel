@@ -114,6 +114,7 @@ class ConsultationController extends Controller
                 'metadata' => $data['metadata'] ?? $consultation->metadata,
                 'audio_files' => $data['audioFiles'] ?? $consultation->audio_files,
             ]);
+            $this->syncCompletionTimestamp($consultation);
 
             $changedFields = array_keys($consultation->getDirty());
             if (! empty($changedFields)) {
@@ -124,6 +125,8 @@ class ConsultationController extends Controller
                 }
             }
         } else {
+            $completionTimestamp = $status === 'completed' ? now() : null;
+
             $consultation = Consultation::create([
                 'patient_id' => $patient->id,
                 'doctor_id' => $request->user()->id,
@@ -135,6 +138,7 @@ class ConsultationController extends Controller
                 'current_step' => $step,
                 'metadata' => $data['metadata'] ?? null,
                 'audio_files' => $data['audioFiles'] ?? null,
+                'completed_at' => $completionTimestamp,
             ]);
             if (! empty($data['anamnesis'])) {
                 $this->versionService->record($consultation, (string) $request->user()->id, $consultation->metadata ?? []);
@@ -172,6 +176,7 @@ class ConsultationController extends Controller
                 $consultation->{$snake} = $data[$field];
             }
         }
+        $this->syncCompletionTimestamp($consultation);
 
         $changedFields = array_keys($consultation->getDirty());
         $consultation->save();
@@ -194,6 +199,9 @@ class ConsultationController extends Controller
         $original = $consultation->getOriginal();
         $consultation->status = 'completed';
         $consultation->current_step = 'complete';
+        if (! $consultation->completed_at) {
+            $consultation->completed_at = Carbon::now();
+        }
         $this->cleanupAudio($consultation);
         $consultation->save();
 
@@ -233,6 +241,7 @@ class ConsultationController extends Controller
             'audioFiles' => $consultation->audio_files,
             'createdAt' => optional($consultation->created_at)->toIso8601String(),
             'updatedAt' => optional($consultation->updated_at)->toIso8601String(),
+            'completedAt' => optional($consultation->completed_at)->toIso8601String(),
             'processing' => $this->transformProcessing($consultation),
             'anamnesisVersion' => [
                 'current' => (int) ($consultation->anamnesis_version ?? 0),
@@ -292,5 +301,16 @@ class ConsultationController extends Controller
         $metadata = $consultation->metadata ?? [];
         unset($metadata['audioSegments']);
         $consultation->metadata = $metadata;
+    }
+
+    private function syncCompletionTimestamp(Consultation $consultation): void
+    {
+        if ($consultation->status === 'completed') {
+            if (! $consultation->completed_at) {
+                $consultation->completed_at = Carbon::now();
+            }
+        } else {
+            $consultation->completed_at = null;
+        }
     }
 }
