@@ -27,6 +27,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/consultations', [ConsultationController::class, 'store']);
     Route::patch('/consultations/{id}', [ConsultationController::class, 'update']);
     Route::post('/consultations/{id}/complete', [ConsultationController::class, 'complete']);
+    Route::delete('/consultations/{id}', [ConsultationController::class, 'destroy']);
     Route::get('/consultations/{id}/anamneses', [AnamnesisVersionController::class, 'index']);
     Route::get('/consultations/{id}/audits', [ConsultationAuditController::class, 'index']);
 

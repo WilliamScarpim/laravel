@@ -9,6 +9,9 @@ use App\Services\AnamnesisVersionService;
 use App\Services\ConsultationAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ConsultationController extends Controller
 {
@@ -193,7 +196,7 @@ class ConsultationController extends Controller
         return response()->json(['data' => $this->transform($consultation)]);
     }
 
-    public function complete(string $id)
+    public function complete(Request $request, string $id)
     {
         $consultation = Consultation::findOrFail($id);
         $original = $consultation->getOriginal();
@@ -210,6 +213,33 @@ class ConsultationController extends Controller
         $consultation->load(['patient', 'doctor']);
 
         return response()->json(['data' => $this->transform($consultation)]);
+    }
+
+    public function destroy(string $id)
+    {
+        $consultation = Consultation::with(['documents.versions', 'anamnesisVersions', 'auditLogs', 'jobs'])
+            ->findOrFail($id);
+
+        if ($consultation->status === 'completed') {
+            return response()->json(['message' => 'Consultas concluídas não podem ser removidas.'], 422);
+        }
+
+        DB::transaction(function () use ($consultation) {
+            foreach ($consultation->documents as $document) {
+                $document->versions()->delete();
+                $document->delete();
+            }
+
+            $consultation->anamnesisVersions()->delete();
+            $consultation->auditLogs()->delete();
+            $consultation->jobs()->delete();
+
+            $this->cleanupAudio($consultation);
+
+            $consultation->delete();
+        });
+
+        return response()->json(['message' => 'Consulta removida com sucesso.']);
     }
 
     public function transform(Consultation $consultation): array
@@ -272,35 +302,14 @@ class ConsultationController extends Controller
     private function cleanupAudio(Consultation $consultation): void
     {
         $files = $consultation->audio_files ?? [];
-        foreach ($files as $entry) {
-            $paths = [];
-            if (! empty($entry['original'])) {
-                $paths[] = $entry['original'];
-            }
-            if (! empty($entry['optimized'])) {
-                $paths[] = $entry['optimized'];
-            }
-            if (! empty($entry['segments']) && is_array($entry['segments'])) {
-                foreach ($entry['segments'] as $seg) {
-                    if (! empty($seg['path'])) {
-                        $paths[] = $seg['path'];
-                    }
-                }
-            }
+        $this->removeAudioArtifacts($files);
 
-            foreach ($paths as $path) {
-                try {
-                    \Storage::disk('local')->delete($path);
-                } catch (\Throwable $e) {
-                    // ignore
-                }
-            }
-        }
-
-        $consultation->audio_files = null;
         $metadata = $consultation->metadata ?? [];
-        unset($metadata['audioSegments']);
-        $consultation->metadata = $metadata;
+        if ($consultation->audio_files !== null || ! empty($metadata['audioSegments'] ?? null)) {
+            $consultation->audio_files = null;
+            unset($metadata['audioSegments']);
+            $consultation->metadata = $metadata;
+        }
     }
 
     private function syncCompletionTimestamp(Consultation $consultation): void
@@ -311,6 +320,60 @@ class ConsultationController extends Controller
             }
         } else {
             $consultation->completed_at = null;
+        }
+    }
+
+    private function removeAudioArtifacts(array $files): void
+    {
+        if (empty($files)) {
+            return;
+        }
+
+        $disk = Storage::disk('local');
+        $paths = [];
+        $directories = [];
+
+        foreach ($files as $entry) {
+            if (! empty($entry['original'])) {
+                $paths[] = $entry['original'];
+            }
+            if (! empty($entry['optimized'])) {
+                $paths[] = $entry['optimized'];
+                $directories[] = dirname($entry['optimized']);
+            }
+            if (! empty($entry['segments']) && is_array($entry['segments'])) {
+                foreach ($entry['segments'] as $segment) {
+                    if (! empty($segment['path'])) {
+                        $paths[] = $segment['path'];
+                        $directories[] = dirname($segment['path']);
+                    }
+                }
+            }
+        }
+
+        foreach (array_unique($paths) as $path) {
+            try {
+                $disk->delete($path);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        foreach (array_unique($directories) as $directory) {
+            if (! $directory) {
+                continue;
+            }
+
+            $normalized = trim(str_replace('\\', '/', $directory), '/');
+            if (! Str::startsWith($normalized, ['tmp/optimized', 'tmp/chunks'])) {
+                continue;
+            }
+
+            try {
+                $disk->deleteDirectory($normalized);
+            } catch (\Throwable $e) {
+                // ignore
+            }
         }
     }
 }

@@ -80,23 +80,21 @@ class ProcessTranscriptionJob implements ShouldQueue
 
             $notesBlock = $this->notes ? trim($this->notes) : '';
             $transcriptWithNotes = $this->applyNotesToTranscript($prepared, $notesBlock);
+            $unifiedTranscript = $this->type === 'additional'
+                ? $this->appendAdditionalTranscription($consultation, $transcriptWithNotes)
+                : $transcriptWithNotes;
 
             if ($this->type === 'additional') {
                 $insights = $aiService->mergeWithExisting(
                     (string) $consultation->anamnesis,
-                    $transcriptWithNotes
+                    $unifiedTranscript
                 );
             } else {
-                $insights = $aiService->buildAnamnesisAndInsights($transcriptWithNotes);
+                $insights = $aiService->buildAnamnesisAndInsights($unifiedTranscript);
             }
 
             if (! $insights) {
                 throw new \RuntimeException('Falha ao gerar a anamnese/insights.');
-            }
-
-            $preparedWithNotes = $transcriptWithNotes;
-            if ($this->type === 'additional') {
-                $preparedWithNotes = $this->appendAdditionalTranscription($consultation, $transcriptWithNotes);
             }
 
             $anamnesisText = $insights['anamnesis'] ?? null;
@@ -111,7 +109,13 @@ class ProcessTranscriptionJob implements ShouldQueue
             $metadata = $consultation->metadata ?? [];
             $metadata['flags'] = $flags;
             $metadata['missingQuestions'] = $questions;
-            $metadata['audioSegments'] = $audio['segments'] ?? [];
+            $existingSegments = is_array($metadata['audioSegments'] ?? null)
+                ? $metadata['audioSegments']
+                : [];
+            $metadata['audioSegments'] = array_values(array_merge(
+                $existingSegments,
+                $audio['segments'] ?? []
+            ));
             if ($notesBlock !== '') {
                 $history = $metadata['manualNotes'] ?? [];
                 $history[] = [
@@ -133,7 +137,7 @@ class ProcessTranscriptionJob implements ShouldQueue
             $original = $consultation->getOriginal();
 
             $consultation->fill([
-                'transcription' => $preparedWithNotes,
+                'transcription' => $unifiedTranscript,
                 'anamnesis' => $anamnesisText,
                 'summary' => $insights['summary'] ?? null,
                 'status' => 'transcription',
