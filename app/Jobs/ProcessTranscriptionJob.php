@@ -78,28 +78,31 @@ class ProcessTranscriptionJob implements ShouldQueue
 
             $jobService->update($job, 'processing', 'anamnesis', 65);
 
+            $notesBlock = $this->notes ? trim($this->notes) : '';
+            $transcriptWithNotes = $this->applyNotesToTranscript($prepared, $notesBlock);
+
             if ($this->type === 'additional') {
                 $insights = $aiService->mergeWithExisting(
                     (string) $consultation->anamnesis,
-                    $prepared
+                    $transcriptWithNotes
                 );
             } else {
-                $insights = $aiService->buildAnamnesisAndInsights($prepared);
+                $insights = $aiService->buildAnamnesisAndInsights($transcriptWithNotes);
             }
 
             if (! $insights) {
                 throw new \RuntimeException('Falha ao gerar a anamnese/insights.');
             }
 
-            $notesBlock = $this->notes ? trim($this->notes) : '';
-            $preparedWithNotes = $prepared;
+            $preparedWithNotes = $transcriptWithNotes;
+            if ($this->type === 'additional') {
+                $preparedWithNotes = $this->appendAdditionalTranscription($consultation, $transcriptWithNotes);
+            }
+
             $anamnesisText = $insights['anamnesis'] ?? null;
 
-            if ($notesBlock !== '') {
-                $preparedWithNotes .= "\n\n## Notas do médico\n{$notesBlock}";
-                if ($anamnesisText) {
-                    $anamnesisText .= "\n\n**Notas complementares do médico:**\n{$notesBlock}";
-                }
+            if ($notesBlock !== '' && $anamnesisText) {
+                $anamnesisText .= "\n\n**Notas complementares do médico:**\n{$notesBlock}";
             }
 
             $flags = $this->normalizeFlags($insights['dynamic_flags'] ?? []);
@@ -229,5 +232,34 @@ class ProcessTranscriptionJob implements ShouldQueue
                 'isDone' => $question['isDone'] ?? false,
             ];
         })->filter(fn ($q) => ! empty($q['text']))->values()->all();
+    }
+
+    private function applyNotesToTranscript(string $transcript, string $notesBlock): string
+    {
+        $transcript = trim($transcript);
+
+        if ($notesBlock === '') {
+            return $transcript;
+        }
+
+        if ($transcript === '') {
+            return "## Notas do médico\n{$notesBlock}";
+        }
+
+        return "{$transcript}\n\n## Notas do médico\n{$notesBlock}";
+    }
+
+    private function appendAdditionalTranscription(Consultation $consultation, string $segment): string
+    {
+        $current = trim((string) $consultation->transcription);
+        $segment = trim($segment);
+
+        if ($current === '') {
+            return $segment;
+        }
+
+        $header = '### Interação adicional registrada em ' . now()->format('d/m/Y H:i');
+
+        return "{$current}\n\n---\n\n{$header}\n\n{$segment}";
     }
 }
