@@ -12,13 +12,12 @@ php artisan config:clear
 php artisan cache:clear
 
 
+Editar template email 2FA.
 
 
+Ao invés de chamar de MEDICO, alterar para PROFISSIONAL, porque pode ser utilizado por fisiotraputas, psicologos, nutricionistas etc.
 
 
-PROBLEMA COM LOGIN INVADIO E VALIDO (CRIAR NOVO CHAT
-
-NAO ESTA ENVIANDO EMAIL DE 2FA. VER CONF MAIL PIT.
 
 
 Substituir RECEITA por PRESCRIÇÃO

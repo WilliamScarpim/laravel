@@ -240,6 +240,7 @@ A anamnese deve ser entregue em **Markdown**, contendo exatamente as seções co
 - Sempre registrar: **"não comentado na consulta"** quando faltar informação.  
 - **Somente a seção definida como HDA deve ser entregue em parágrafo contínuo**.  
 - As demais seções podem aparecer em tópicos.
+- Use a terceira pessoa do singular, como se fosse o médico da transcrição escrevendo a anamnese.
 
 ---
 
@@ -372,6 +373,7 @@ A anamnese deve ser entregue em **Markdown**, contendo exatamente as seções co
 - Sempre registrar: **"não comentado na consulta"** quando faltar informação.  
 - **Somente a seção definida como HDA deve ser entregue em parágrafo contínuo**.  
 - As demais seções podem aparecer em tópicos.
+- Use a terceira pessoa do singular, como se fosse o médico da transcrição escrevendo a anamnese.
 
 ---
 
@@ -524,6 +526,7 @@ Responda SOMENTE em JSON, seguindo o formato:
 Regras:
 - Utilize os dados do paciente (idade, sexo, comorbidades, medicamentos em uso etc.) exclusivamente a partir da anamnese e do contexto recebido.
 - Sempre destaque quando a informação estiver ausente ou contraditória.
+- Use a terceira pessoa do singular, como se fosse o médico da transcrição escrevendo a anamnese. 
 - Prefira termos médicos em português e mencione o trecho da anamnese que embasa cada alerta quando possível.
 - Se nenhuma inconsistência relevante for encontrada, retorne status "safe" e mantenha as listas vazias.
 PROMPT;
