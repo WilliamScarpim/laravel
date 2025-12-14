@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Consultation;
 use App\Models\ConsultationJob;
 use App\Models\Patient;
+use App\Models\User;
 use App\Services\AnamnesisVersionService;
 use App\Services\ConsultationAuditService;
 use Illuminate\Http\Request;
@@ -23,11 +24,16 @@ class ConsultationController extends Controller
 
     public function index(Request $request)
     {
-        $query = Consultation::with(['patient', 'doctor', 'pendingJob', 'latestJob'])
+        $query = Consultation::with(['patient', 'doctor.specialtyRelation', 'pendingJob', 'latestJob'])
             ->withCount('anamnesisVersions')
             ->withMax('anamnesisVersions as anamnesis_version', 'version')
             ->orderByDesc('date')
             ->orderByDesc('created_at');
+
+        $user = $request->user();
+        if ($user && $user->isDoctor()) {
+            $query->where('doctor_id', $user->id);
+        }
 
         $perPage = max(5, min(100, (int) $request->query('perPage', 20)));
         $page = max(1, (int) $request->query('page', 1));
@@ -65,11 +71,11 @@ class ConsultationController extends Controller
         ]);
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $consultation = Consultation::with([
             'patient',
-            'doctor',
+            'doctor.specialtyRelation',
             'documents',
             'pendingJob',
             'latestJob',
@@ -81,6 +87,8 @@ class ConsultationController extends Controller
         if (! $consultation) {
             return response()->json(['message' => 'Consulta não encontrada'], 404);
         }
+
+        $this->authorizeConsultationAccess($request->user(), $consultation);
 
         return response()->json(['data' => $this->transform($consultation)]);
     }
@@ -156,6 +164,7 @@ class ConsultationController extends Controller
     public function update(Request $request, string $id)
     {
         $consultation = Consultation::findOrFail($id);
+        $this->authorizeConsultationAccess($request->user(), $consultation);
         $data = $request->validate([
             'patientId' => ['nullable', 'string', 'exists:patients,id'],
             'transcription' => ['nullable', 'string'],
@@ -199,6 +208,7 @@ class ConsultationController extends Controller
     public function complete(Request $request, string $id)
     {
         $consultation = Consultation::findOrFail($id);
+        $this->authorizeConsultationAccess($request->user(), $consultation);
         $original = $consultation->getOriginal();
         $consultation->status = 'completed';
         $consultation->current_step = 'complete';
@@ -215,10 +225,11 @@ class ConsultationController extends Controller
         return response()->json(['data' => $this->transform($consultation)]);
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
         $consultation = Consultation::with(['documents.versions', 'anamnesisVersions', 'auditLogs', 'jobs'])
             ->findOrFail($id);
+        $this->authorizeConsultationAccess($request->user(), $consultation);
 
         if ($consultation->status === 'completed') {
             return response()->json(['message' => 'Consultas concluídas não podem ser removidas.'], 422);
@@ -259,7 +270,8 @@ class ConsultationController extends Controller
                 'id' => (string) $consultation->doctor->id,
                 'name' => $consultation->doctor->name,
                 'crm' => $consultation->doctor->crm,
-                'specialty' => $consultation->doctor->specialty,
+                'specialty' => $consultation->doctor->specialtyRelation?->name ?? $consultation->doctor->specialty,
+                'specialtyId' => $consultation->doctor->specialtyRelation?->id,
             ] : null,
             'date' => optional($consultation->date)->format('Y-m-d'),
             'transcription' => $consultation->transcription,
@@ -374,6 +386,17 @@ class ConsultationController extends Controller
             } catch (\Throwable $e) {
                 // ignore
             }
+        }
+    }
+
+    private function authorizeConsultationAccess(?User $user, Consultation $consultation): void
+    {
+        if (! $user) {
+            abort(401);
+        }
+
+        if ($user->isDoctor() && (string) $consultation->doctor_id !== (string) $user->id) {
+            abort(403, 'Prontuário pertence a outro médico.');
         }
     }
 }

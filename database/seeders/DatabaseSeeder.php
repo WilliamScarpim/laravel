@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\Consultation;
 use App\Models\Document;
 use App\Models\Patient;
+use App\Models\Specialty;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -18,14 +19,27 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $company = User::firstOrCreate(
+            ['email' => 'empresa@example.com'],
+            [
+                'name' => 'Clínica Exemplo',
+                'password' => bcrypt('password'),
+                'role' => 'company',
+            ]
+        );
+
+        $specialty = Specialty::where('name', 'Clínica médica')->first();
+
         $doctor = User::firstOrCreate(
             ['email' => 'medico@example.com'],
             [
                 'name' => 'Dr. Ana Paula Mendes',
                 'password' => bcrypt('password'),
                 'role' => 'doctor',
-                'crm' => 'CRM/SP 123456',
-                'specialty' => 'Clínica Geral',
+                'crm' => '123456/SP',
+                'specialty' => $specialty?->name ?? 'Clínica Geral',
+                'specialty_id' => $specialty?->id,
+                'company_id' => $company->id,
             ]
         );
 

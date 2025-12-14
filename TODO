@@ -8,11 +8,23 @@ npm run dev
 php artisan queue:work
 
 
+php artisan config:clear
+php artisan cache:clear
 
 
-Criar ambiente de login de empresas. Empresas podem adicionar/cadastrar vários médicos (controlando pelo e-mail). 
-Criar ambiente de login pra medicos e empresas por e-mail e senha, com autenticação de 2 fatores por e-mail. 
-Por segurança, usar sessões que expiram rapido (pedir pra logar noamente se ficar no maximo 5h sem acesso).
+
+
+
+
+PROBLEMA COM LOGIN INVADIO E VALIDO (CRIAR NOVO CHAT
+
+NAO ESTA ENVIANDO EMAIL DE 2FA. VER CONF MAIL PIT.
+
+
+Substituir RECEITA por PRESCRIÇÃO
+
+INTEGRAR COM memed OU CFM?
+
 Por se tratar de um ambiente que trabalha com dados pessoais de paciente, pensar na melor forma de criptografar o conteudo das consultas no banco de dados, que dificulte o acesso caso alguem tenha acesso ao banco de dados, mas que continue sendo pesquisável.
 
 Como o sistema não será certificado NGS2 (CFM), não pode "eliminar o uso do papel". Deixar isso claro no rodapé da pagina do prontuário, em letras menores, que o sistema é um ferramenta que auxilia, mas tem que não substitui as regras de arquivamento de prontuário do CFM. Após terminar o Prontuário, o medico tem opção de imprimir todo porntuário (anamnese), transcrição, e documentos anexos (receituario, atestado etc).

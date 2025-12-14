@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Patient;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class PatientController extends Controller
 {
@@ -15,6 +16,12 @@ class PatientController extends Controller
         }
 
         $patient = Patient::whereRaw('REPLACE(REPLACE(REPLACE(cpf, ".", ""), "-", ""), "/", "") = ?', [$cpf])->first();
+
+        Log::info('patient.search', [
+            'cpf' => $cpf,
+            'found' => (bool) $patient,
+            'ip' => $request->ip(),
+        ]);
 
         if (! $patient) {
             return response()->json(['patient' => null], 404);

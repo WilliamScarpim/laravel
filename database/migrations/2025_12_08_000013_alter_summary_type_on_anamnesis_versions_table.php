@@ -8,14 +8,18 @@ return new class extends Migration {
     public function up(): void
     {
         if (Schema::hasTable('anamnesis_versions')) {
-            DB::statement('ALTER TABLE `anamnesis_versions` MODIFY `summary` LONGTEXT NULL');
+            if (Schema::getConnection()->getDriverName() !== 'sqlite') {
+                DB::statement('ALTER TABLE `anamnesis_versions` MODIFY `summary` LONGTEXT NULL');
+            }
         }
     }
 
     public function down(): void
     {
         if (Schema::hasTable('anamnesis_versions')) {
-            DB::statement('ALTER TABLE `anamnesis_versions` MODIFY `summary` VARCHAR(255) NULL');
+            if (Schema::getConnection()->getDriverName() !== 'sqlite') {
+                DB::statement('ALTER TABLE `anamnesis_versions` MODIFY `summary` VARCHAR(255) NULL');
+            }
         }
     }
 };

@@ -9,14 +9,18 @@ return new class extends Migration
     public function up(): void
     {
         if (Schema::hasTable('consultations')) {
-            DB::statement('ALTER TABLE consultations MODIFY summary LONGTEXT NULL');
+            if (Schema::getConnection()->getDriverName() !== 'sqlite') {
+                DB::statement('ALTER TABLE consultations MODIFY summary LONGTEXT NULL');
+            }
         }
     }
 
     public function down(): void
     {
         if (Schema::hasTable('consultations')) {
-            DB::statement('ALTER TABLE consultations MODIFY summary VARCHAR(255) NULL');
+            if (Schema::getConnection()->getDriverName() !== 'sqlite') {
+                DB::statement('ALTER TABLE consultations MODIFY summary VARCHAR(255) NULL');
+            }
         }
     }
 };

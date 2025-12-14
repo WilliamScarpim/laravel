@@ -36,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth' => Authenticate::class,
             'guest' => RedirectIfAuthenticated::class,
             'throttle' => ThrottleRequests::class,
+            'role' => \App\Http\Middleware\EnsureRole::class,
         ]);
 
         // Web stack (for Sanctum stateful auth)
