@@ -499,23 +499,7 @@ PROMPT;
 
     public function reviewPrescription(array $context, string $documentContent, string $documentType = 'prescription'): array
     {
-        $anamnesis = trim((string) ($context['anamnesis'] ?? ''));
-        $transcription = trim((string) ($context['transcription'] ?? ''));
-
-        if ($anamnesis === '' && $transcription !== '') {
-            $anamnesis = $transcription;
-        }
-
-        $summary = trim((string) ($context['summary'] ?? ''));
-        $metadata = is_array($context['metadata'] ?? null) ? $context['metadata'] : [];
-        $patient = is_array($context['patient'] ?? null) ? $context['patient'] : null;
-        $patientBlock = $this->formatPatientBlock($patient, $metadata);
-        $metadataBlock = $this->formatMetadataBlock($metadata);
-
-        $clinicalBlock = trim($summary . "\n\n" . $anamnesis);
-        if ($clinicalBlock === '') {
-            $clinicalBlock = $transcription !== '' ? $transcription : 'Sem dados clínicos registrados. Utilize apenas o que for exibido nos documentos.';
-        }
+        [$patientBlock, $metadataBlock, $clinicalBlock] = $this->buildReviewContext($context);
 
         $systemPrompt = <<<PROMPT
 Você é um auditor clínico responsável por revisar a segurança de prescrições médicas. Compare o receituário com toda a anamnese disponível e aponte inconsistências de dosagem, interações medicamentosas, alergias, contra-indicações e lacunas de informação relevantes.
@@ -632,6 +616,149 @@ PROMPT;
 
             throw $exception;
         }
+    }
+
+    public function reviewExamRequest(array $context, string $documentContent, string $documentType = 'exam_request'): array
+    {
+        [$patientBlock, $metadataBlock, $clinicalBlock] = $this->buildReviewContext($context);
+
+        $systemPrompt = <<<PROMPT
+Você é um auditor clínico responsável por revisar solicitações de exames médicos. Compare cada exame solicitado com a anamnese completa e aponte exames desnecessários, ausentes, duplicados ou contraindicados, sempre justificando com base nos achados clínicos descritos.
+
+Responda SOMENTE em JSON, seguindo o formato:
+{
+  "status": "safe|attention|risk",
+  "summary": "frase curta com a conclusão",
+  "alerts": [
+    {
+      "id": "string",
+      "title": "string",
+      "type": "dosage|interaction|allergy|contraindication|missing_info|other",
+      "severity": "low|medium|high",
+      "description": "detalhes objetivos do risco ou inconsistência",
+      "recommendation": "ações ou ajustes sugeridos"
+    }
+  ],
+  "checklist": ["itens adicionais que o médico deve confirmar manualmente"]
+}
+
+Regras:
+- Analise a pertinência clínica de cada exame, considerando hipótese diagnóstica, comorbidades e fatores de risco descritos.
+- Indique exames faltantes quando existirem sintomas ou condutas que justifiquem investigação adicional.
+- Destaque redundâncias, exames muito precoces sem indicação ou solicitações que exigem preparo especial não citado.
+- Use linguagem objetiva e cite o trecho da anamnese que fundamenta cada recomendação quando possível.
+PROMPT;
+
+        $payloadSections = array_filter([
+            $patientBlock,
+            $metadataBlock,
+            "ANAMNESE_COMPLETA:\n{$clinicalBlock}",
+            "DOCUMENTO_EM_ANALISE ({$documentType}):\n{$documentContent}",
+        ]);
+
+        $payload = implode("\n\n", $payloadSections);
+
+        $this->logDebug('[AI] Revisão de solicitação de exames', [
+            'document_length' => mb_strlen($documentContent),
+            'anamnesis_length' => mb_strlen($clinicalBlock),
+        ]);
+
+        try {
+            $response = $this->chatRequest([
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $payload],
+            ], timeout: (int) env('AI_HTTP_TIMEOUT', 180));
+
+            $content = $response['choices'][0]['message']['content'] ?? '{}';
+            $decoded = json_decode($content, true);
+
+            if (! is_array($decoded)) {
+                throw new \RuntimeException('Resposta inválida da IA ao revisar solicitação de exames.');
+            }
+
+            $status = $this->normalizeReviewStatus($decoded['status'] ?? null);
+            $summary = trim((string) ($decoded['summary'] ?? ''));
+
+            if ($summary === '') {
+                $summary = 'A revisão automatizada foi concluída, porém não retornou um resumo.';
+            }
+
+            $alerts = [];
+            foreach (($decoded['alerts'] ?? []) as $index => $alert) {
+                if (! is_array($alert)) {
+                    continue;
+                }
+
+                $alerts[] = [
+                    'id' => (string) ($alert['id'] ?? ('alert_' . ($index + 1))),
+                    'title' => (string) ($alert['title'] ?? 'Alerta clínico'),
+                    'type' => $this->normalizeAlertType($alert['type'] ?? null),
+                    'severity' => $this->normalizeAlertSeverity($alert['severity'] ?? null),
+                    'description' => trim((string) ($alert['description'] ?? '')),
+                    'evidence' => trim((string) ($alert['evidence'] ?? '')),
+                    'recommendation' => trim((string) ($alert['recommendation'] ?? '')),
+                ];
+            }
+
+            $alerts = array_values(array_filter($alerts, fn ($alert) => $alert['description'] !== '' || $alert['recommendation'] !== '' || $alert['evidence'] !== ''));
+
+            $checklist = [];
+            foreach (($decoded['checklist'] ?? []) as $item) {
+                if (is_string($item)) {
+                    $text = trim($item);
+                } elseif (is_array($item)) {
+                    $text = trim((string) ($item['text'] ?? ''));
+                } else {
+                    $text = '';
+                }
+
+                if ($text !== '') {
+                    $checklist[] = $text;
+                }
+            }
+
+            $this->logDebug('[AI] Revisão de exames concluída', [
+                'status' => $status,
+                'alerts' => count($alerts),
+                'checklist' => count($checklist),
+            ]);
+
+            return [
+                'status' => $status,
+                'summary' => $summary,
+                'alerts' => $alerts,
+                'checklist' => $checklist,
+            ];
+        } catch (\Throwable $exception) {
+            Log::error('[AI] Falha ao revisar solicitação de exames', [
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    private function buildReviewContext(array $context): array
+    {
+        $anamnesis = trim((string) ($context['anamnesis'] ?? ''));
+        $transcription = trim((string) ($context['transcription'] ?? ''));
+
+        if ($anamnesis === '' && $transcription !== '') {
+            $anamnesis = $transcription;
+        }
+
+        $summary = trim((string) ($context['summary'] ?? ''));
+        $metadata = is_array($context['metadata'] ?? null) ? $context['metadata'] : [];
+        $patient = is_array($context['patient'] ?? null) ? $context['patient'] : null;
+        $patientBlock = $this->formatPatientBlock($patient, $metadata);
+        $metadataBlock = $this->formatMetadataBlock($metadata);
+
+        $clinicalBlock = trim($summary . "\n\n" . $anamnesis);
+        if ($clinicalBlock === '') {
+            $clinicalBlock = $transcription !== '' ? $transcription : 'Sem dados clínicos registrados. Utilize apenas o que for exibido nos documentos.';
+        }
+
+        return [$patientBlock, $metadataBlock, $clinicalBlock];
     }
 
     private function formatPatientBlock(?array $patient, array $metadata): string

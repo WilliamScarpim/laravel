@@ -113,10 +113,6 @@ class DocumentController extends Controller
             'content' => ['required', 'string'],
         ]);
 
-        if ($data['type'] !== 'prescription') {
-            abort(422, 'A revisão automatizada está disponível apenas para receituários no momento.');
-        }
-
         $patient = $consultation->patient;
         $context = [
             'anamnesis' => trim((string) ($consultation->anamnesis ?? '')),
@@ -132,12 +128,21 @@ class DocumentController extends Controller
         ];
 
         try {
-            $analysis = $this->aiService->reviewPrescription($context, $data['content'], $data['type']);
+            switch ($data['type']) {
+                case 'prescription':
+                    $analysis = $this->aiService->reviewPrescription($context, $data['content'], $data['type']);
+                    break;
+                case 'exam_request':
+                    $analysis = $this->aiService->reviewExamRequest($context, $data['content'], $data['type']);
+                    break;
+                default:
+                    abort(422, 'Revisão automatizada indisponível para este tipo de documento.');
+            }
         } catch (\Throwable $exception) {
             report($exception);
 
             return response()->json([
-                'message' => 'Falha ao revisar o receituário com IA.',
+                'message' => 'Falha ao revisar o documento com IA.',
             ], 502);
         }
 
