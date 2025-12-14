@@ -16,6 +16,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 class ProcessTranscriptionJob implements ShouldQueue
@@ -26,6 +27,22 @@ class ProcessTranscriptionJob implements ShouldQueue
     use SerializesModels;
 
     public $tries = 1;
+
+    private const ANAMNESIS_SECTIONS = [
+        'Estado civil, ocupação e funcionalidade',
+        'Queixa principal',
+        'História da Doença Atual (HDA)',
+        'História da Doença Atual',
+        'Antecedentes pessoais e familiares',
+        'Hábitos de vida',
+        'Medicamentos em uso',
+        'Síndromes geriátricas',
+        'Conduta',
+        'Hipótese diagnóstica',
+        'Tratamento não farmacológico',
+        'Tratamento farmacológico',
+    ];
+
 
     public function __construct(
         public readonly string $consultationJobId,
@@ -97,9 +114,9 @@ class ProcessTranscriptionJob implements ShouldQueue
                 throw new \RuntimeException('Falha ao gerar a anamnese/insights.');
             }
 
-            $anamnesisText = $insights['anamnesis'] ?? null;
+            $anamnesisText = $this->normalizeAnamnesisMarkdown($insights['anamnesis'] ?? null);
             if (! $anamnesisText) {
-                $anamnesisText = $consultation->anamnesis ?: $unifiedTranscript;
+                $anamnesisText = $this->normalizeAnamnesisMarkdown($consultation->anamnesis ?: $unifiedTranscript);
             }
 
             if ($notesBlock !== '' && $anamnesisText) {
@@ -113,7 +130,15 @@ class ProcessTranscriptionJob implements ShouldQueue
             $flags = $this->normalizeFlags($insights['dynamic_flags'] ?? []);
             $questions = $this->normalizeQuestions($insights['missing_questions'] ?? []);
 
-            $metadata['flags'] = ! empty($flags) ? $flags : $existingFlags;
+            $filteredFlags = array_values(array_filter($flags, static function ($flag) {
+                $title = trim((string) ($flag['title'] ?? ''));
+                $details = trim((string) ($flag['details'] ?? ''));
+                $suggestion = trim((string) ($flag['suggestion'] ?? ''));
+
+                return $title !== '' || $details !== '' || $suggestion !== '';
+            }));
+
+            $metadata['flags'] = ! empty($filteredFlags) ? $filteredFlags : $existingFlags;
             $metadata['missingQuestions'] = ! empty($questions) ? $questions : $existingQuestions;
             $existingSegments = is_array($metadata['audioSegments'] ?? null)
                 ? $metadata['audioSegments']
@@ -210,12 +235,29 @@ class ProcessTranscriptionJob implements ShouldQueue
         ];
 
         return collect($flags)->map(function ($flag, $index) use ($mapSeverity, $mapType) {
+            if (is_string($flag)) {
+                $text = trim($flag);
+
+                return [
+                    'id' => 'flag_' . ($index + 1),
+                    'title' => $text !== '' ? Str::of($text)->limit(80)->value() : 'Alerta',
+                    'severity' => 'yellow',
+                    'details' => $text,
+                    'suggestion' => '',
+                    'category' => 'clinical',
+                ];
+            }
+
+            $title = trim((string) ($flag['title'] ?? ''));
+            $details = trim((string) ($flag['details'] ?? ''));
+            $suggestion = trim((string) ($flag['suggestion'] ?? ''));
+
             return [
                 'id' => $flag['id'] ?? 'flag_' . ($index + 1),
-                'title' => $flag['title'] ?? 'Alerta',
+                'title' => $title !== '' ? $title : 'Alerta',
                 'severity' => $mapSeverity[strtolower($flag['severity'] ?? '')] ?? 'yellow',
-                'details' => $flag['details'] ?? '',
-                'suggestion' => $flag['suggestion'] ?? '',
+                'details' => $details,
+                'suggestion' => $suggestion,
                 'category' => $mapType[strtolower($flag['type'] ?? '')] ?? 'clinical',
             ];
         })->values()->all();
@@ -225,18 +267,22 @@ class ProcessTranscriptionJob implements ShouldQueue
     {
         return collect($questions)->map(function ($question, $index) {
             if (is_string($question)) {
+                $text = trim($question);
+
                 return [
                     'id' => 'q_' . ($index + 1),
-                    'text' => $question,
+                    'text' => $text,
                     'category' => 'general',
                     'priority' => 'medium',
                     'isDone' => false,
                 ];
             }
 
+            $text = trim((string) ($question['text'] ?? ''));
+
             return [
                 'id' => $question['id'] ?? 'q_' . ($index + 1),
-                'text' => $question['text'] ?? '',
+                'text' => $text,
                 'category' => $question['category'] ?? 'general',
                 'priority' => $question['priority'] ?? 'medium',
                 'isDone' => $question['isDone'] ?? false,
@@ -272,4 +318,27 @@ class ProcessTranscriptionJob implements ShouldQueue
 
         return "{$current}\n\n---\n\n{$header}\n\n{$segment}";
     }
+    private function normalizeAnamnesisMarkdown(?string $text): string
+    {
+        $value = trim((string) $text);
+
+        if ($value === '') {
+            return '';
+        }
+
+        $value = preg_replace("/\r?\n/", "\n", $value);
+
+        foreach (self::ANAMNESIS_SECTIONS as $section) {
+            $pattern = sprintf(
+                '/(^|\n)\s*(?:#{1,3}\s*)?(?:\*\*|__)?%s(?:\*\*|__)?\s*(?:[:])?/imu',
+                preg_quote($section, '/')
+            );
+            $replacement = "\n\n## {$section}";
+            $value = preg_replace($pattern, $replacement, $value);
+        }
+
+        return trim(preg_replace("/\n{3,}/", "\n\n", $value));
+    }
+
+
 }
