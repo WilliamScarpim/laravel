@@ -98,17 +98,23 @@ class ProcessTranscriptionJob implements ShouldQueue
             }
 
             $anamnesisText = $insights['anamnesis'] ?? null;
+            if (! $anamnesisText) {
+                $anamnesisText = $consultation->anamnesis ?: $unifiedTranscript;
+            }
 
             if ($notesBlock !== '' && $anamnesisText) {
-                $anamnesisText .= "\n\n**Notas complementares do médico:**\n{$notesBlock}";
+                $anamnesisText .= "\n\n**Notas complementares do m??dico:**\n{$notesBlock}";
             }
+
+            $metadata = $consultation->metadata ?? [];
+            $existingFlags = is_array($metadata['flags'] ?? null) ? $metadata['flags'] : [];
+            $existingQuestions = is_array($metadata['missingQuestions'] ?? null) ? $metadata['missingQuestions'] : [];
 
             $flags = $this->normalizeFlags($insights['dynamic_flags'] ?? []);
             $questions = $this->normalizeQuestions($insights['missing_questions'] ?? []);
 
-            $metadata = $consultation->metadata ?? [];
-            $metadata['flags'] = $flags;
-            $metadata['missingQuestions'] = $questions;
+            $metadata['flags'] = ! empty($flags) ? $flags : $existingFlags;
+            $metadata['missingQuestions'] = ! empty($questions) ? $questions : $existingQuestions;
             $existingSegments = is_array($metadata['audioSegments'] ?? null)
                 ? $metadata['audioSegments']
                 : [];
