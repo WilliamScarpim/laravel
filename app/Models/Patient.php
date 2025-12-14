@@ -18,6 +18,10 @@ class Patient extends Model
         'email',
     ];
 
+    protected $casts = [
+        'birth_date' => 'date',
+    ];
+
     public function consultations(): HasMany
     {
         return $this->hasMany(Consultation::class);
