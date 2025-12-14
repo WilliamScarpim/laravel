@@ -114,6 +114,14 @@ class ProcessTranscriptionJob implements ShouldQueue
                 throw new \RuntimeException('Falha ao gerar a anamnese/insights.');
             }
 
+            Log::debug('[ConsultationJob] Resposta da IA', [
+                'job_id' => $job->id,
+                'consultation_id' => $consultation->id,
+                'flags' => $insights['dynamic_flags'] ?? null,
+                'missing_questions' => $insights['missing_questions'] ?? null,
+                'summary_length' => mb_strlen((string) ($insights['summary'] ?? '')),
+            ]);
+
             $anamnesisText = $this->normalizeAnamnesisMarkdown($insights['anamnesis'] ?? null);
             if (! $anamnesisText) {
                 $anamnesisText = $this->normalizeAnamnesisMarkdown($consultation->anamnesis ?: $unifiedTranscript);
@@ -140,6 +148,13 @@ class ProcessTranscriptionJob implements ShouldQueue
 
             $metadata['flags'] = ! empty($filteredFlags) ? $filteredFlags : $existingFlags;
             $metadata['missingQuestions'] = ! empty($questions) ? $questions : $existingQuestions;
+
+            Log::debug('[ConsultationJob] Alertas normalizados', [
+                'job_id' => $job->id,
+                'consultation_id' => $consultation->id,
+                'normalized_flags' => $metadata['flags'],
+                'normalized_missing_questions' => $metadata['missingQuestions'],
+            ]);
             $existingSegments = is_array($metadata['audioSegments'] ?? null)
                 ? $metadata['audioSegments']
                 : [];
@@ -248,17 +263,25 @@ class ProcessTranscriptionJob implements ShouldQueue
                 ];
             }
 
-            $title = trim((string) ($flag['title'] ?? ''));
-            $details = trim((string) ($flag['details'] ?? ''));
-            $suggestion = trim((string) ($flag['suggestion'] ?? ''));
+            $title = $flag['title'] ?? $flag['titulo'] ?? $flag['resumo'] ?? '';
+            $details = $flag['details'] ?? $flag['detalhes'] ?? $flag['descricao'] ?? '';
+            $suggestion = $flag['suggestion'] ?? $flag['sugestao'] ?? $flag['orientacao'] ?? '';
+            $type = $flag['type'] ?? $flag['tipo'] ?? null;
+            $severity = $flag['severity'] ?? $flag['gravidade'] ?? null;
+
+            $title = trim(is_string($title) ? $title : (string) $title);
+            $details = trim(is_string($details) ? $details : (string) $details);
+            $suggestion = trim(is_string($suggestion) ? $suggestion : (string) $suggestion);
+            $severityKey = Str::ascii(strtolower((string) $severity));
+            $typeKey = Str::ascii(strtolower((string) $type));
 
             return [
                 'id' => $flag['id'] ?? 'flag_' . ($index + 1),
                 'title' => $title !== '' ? $title : 'Alerta',
-                'severity' => $mapSeverity[strtolower($flag['severity'] ?? '')] ?? 'yellow',
+                'severity' => $mapSeverity[$severityKey] ?? 'yellow',
                 'details' => $details,
                 'suggestion' => $suggestion,
-                'category' => $mapType[strtolower($flag['type'] ?? '')] ?? 'clinical',
+                'category' => $mapType[$typeKey] ?? 'clinical',
             ];
         })->values()->all();
     }
