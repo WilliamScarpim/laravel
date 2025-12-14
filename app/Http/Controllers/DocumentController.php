@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Consultation;
 use App\Models\Document;
+use App\Services\AiAnamnesisService;
 use App\Services\ConsultationAuditService;
 use App\Services\DocumentVersionService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -13,7 +15,8 @@ class DocumentController extends Controller
 {
     public function __construct(
         private readonly ConsultationAuditService $auditService,
-        private readonly DocumentVersionService $versionService
+        private readonly DocumentVersionService $versionService,
+        private readonly AiAnamnesisService $aiService
     ) {
     }
 
@@ -99,6 +102,46 @@ class DocumentController extends Controller
         }
 
         return response()->json(['data' => $this->transform($doc)]);
+    }
+
+    public function review(Request $request, string $consultationId)
+    {
+        $consultation = Consultation::with('patient')->findOrFail($consultationId);
+
+        $data = $request->validate([
+            'type' => ['required', 'string'],
+            'content' => ['required', 'string'],
+        ]);
+
+        if ($data['type'] !== 'prescription') {
+            abort(422, 'A revisão automatizada está disponível apenas para receituários no momento.');
+        }
+
+        $patient = $consultation->patient;
+        $context = [
+            'anamnesis' => trim((string) ($consultation->anamnesis ?? '')),
+            'transcription' => trim((string) ($consultation->transcription ?? '')),
+            'summary' => trim((string) ($consultation->summary ?? '')),
+            'metadata' => $consultation->metadata ?? [],
+            'patient' => $patient ? [
+                'id' => (string) $patient->id,
+                'name' => $patient->name,
+                'birth_date' => $patient->birth_date,
+                'age' => $patient->birth_date ? Carbon::parse($patient->birth_date)->age : null,
+            ] : null,
+        ];
+
+        try {
+            $analysis = $this->aiService->reviewPrescription($context, $data['content'], $data['type']);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'message' => 'Falha ao revisar o receituário com IA.',
+            ], 502);
+        }
+
+        return response()->json(['data' => $analysis]);
     }
 
     public function update(Request $request, string $id)

@@ -497,6 +497,226 @@ PROMPT;
         }
     }
 
+    public function reviewPrescription(array $context, string $documentContent, string $documentType = 'prescription'): array
+    {
+        $anamnesis = trim((string) ($context['anamnesis'] ?? ''));
+        $transcription = trim((string) ($context['transcription'] ?? ''));
+
+        if ($anamnesis === '' && $transcription !== '') {
+            $anamnesis = $transcription;
+        }
+
+        $summary = trim((string) ($context['summary'] ?? ''));
+        $metadata = is_array($context['metadata'] ?? null) ? $context['metadata'] : [];
+        $patient = is_array($context['patient'] ?? null) ? $context['patient'] : null;
+        $patientBlock = $this->formatPatientBlock($patient, $metadata);
+        $metadataBlock = $this->formatMetadataBlock($metadata);
+
+        $clinicalBlock = trim($summary . "\n\n" . $anamnesis);
+        if ($clinicalBlock === '') {
+            $clinicalBlock = $transcription !== '' ? $transcription : 'Sem dados clínicos registrados. Utilize apenas o que for exibido nos documentos.';
+        }
+
+        $systemPrompt = <<<PROMPT
+Você é um auditor clínico responsável por revisar a segurança de prescrições médicas. Compare o receituário com toda a anamnese disponível e aponte inconsistências de dosagem, interações medicamentosas, alergias, contra-indicações e lacunas de informação relevantes.
+
+Responda SOMENTE em JSON, seguindo o formato:
+{
+  "status": "safe|attention|risk",
+  "summary": "frase curta com a conclusão",
+  "alerts": [
+    {
+      "id": "string",
+      "title": "string",
+      "type": "dosage|interaction|allergy|contraindication|missing_info|other",
+      "severity": "low|medium|high",
+      "description": "detalhes objetivos do risco",
+      "recommendation": "ações ou ajustes sugeridos"
+    }
+  ],
+  "checklist": ["itens adicionais que o médico deve confirmar manualmente"]
+}
+
+Regras:
+- Utilize os dados do paciente (idade, sexo, comorbidades, medicamentos em uso etc.) exclusivamente a partir da anamnese e do contexto recebido.
+- Sempre destaque quando a informação estiver ausente ou contraditória.
+- Prefira termos médicos em português e mencione o trecho da anamnese que embasa cada alerta quando possível.
+- Se nenhuma inconsistência relevante for encontrada, retorne status "safe" e mantenha as listas vazias.
+PROMPT;
+
+        $payloadSections = array_filter([
+            $patientBlock,
+            $metadataBlock,
+            "ANAMNESE_COMPLETA:\n{$clinicalBlock}",
+            "DOCUMENTO_EM_ANALISE ({$documentType}):\n{$documentContent}",
+        ]);
+
+        $payload = implode("\n\n", $payloadSections);
+
+        $this->logDebug('[AI] Revisão de receituário solicitada', [
+            'document_type' => $documentType,
+            'document_length' => mb_strlen($documentContent),
+            'anamnesis_length' => mb_strlen($clinicalBlock),
+        ]);
+
+        try {
+            $response = $this->chatRequest([
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $payload],
+            ], timeout: (int) env('AI_HTTP_TIMEOUT', 180));
+
+            $content = $response['choices'][0]['message']['content'] ?? '{}';
+            $decoded = json_decode($content, true);
+
+            if (! is_array($decoded)) {
+                throw new \RuntimeException('Resposta inválida da IA ao revisar receituário.');
+            }
+
+            $status = $this->normalizeReviewStatus($decoded['status'] ?? null);
+            $summary = trim((string) ($decoded['summary'] ?? ''));
+
+            if ($summary === '') {
+                $summary = 'A revisão automatizada foi concluída, porém não retornou um resumo.';
+            }
+
+            $alerts = [];
+            foreach (($decoded['alerts'] ?? []) as $index => $alert) {
+                if (! is_array($alert)) {
+                    continue;
+                }
+
+                $alerts[] = [
+                    'id' => (string) ($alert['id'] ?? ('alert_' . ($index + 1))),
+                    'title' => (string) ($alert['title'] ?? 'Alerta clínico'),
+                    'type' => $this->normalizeAlertType($alert['type'] ?? null),
+                    'severity' => $this->normalizeAlertSeverity($alert['severity'] ?? null),
+                    'description' => trim((string) ($alert['description'] ?? '')),
+                    'evidence' => trim((string) ($alert['evidence'] ?? '')),
+                    'recommendation' => trim((string) ($alert['recommendation'] ?? '')),
+                ];
+            }
+
+            $alerts = array_values(array_filter($alerts, fn ($alert) => $alert['description'] !== '' || $alert['recommendation'] !== '' || $alert['evidence'] !== ''));
+
+            $checklist = [];
+            foreach (($decoded['checklist'] ?? []) as $item) {
+                if (is_string($item)) {
+                    $text = trim($item);
+                } elseif (is_array($item)) {
+                    $text = trim((string) ($item['text'] ?? ''));
+                } else {
+                    $text = '';
+                }
+
+                if ($text !== '') {
+                    $checklist[] = $text;
+                }
+            }
+
+            $this->logDebug('[AI] Revisão de receituário concluída', [
+                'status' => $status,
+                'alerts' => count($alerts),
+                'checklist' => count($checklist),
+            ]);
+
+            return [
+                'status' => $status,
+                'summary' => $summary,
+                'alerts' => $alerts,
+                'checklist' => $checklist,
+            ];
+        } catch (\Throwable $exception) {
+            Log::error('[AI] Falha ao revisar receituário', [
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    private function formatPatientBlock(?array $patient, array $metadata): string
+    {
+        if (! $patient) {
+            return "PACIENTE:\nDados cadastrais indisponíveis no prontuário.";
+        }
+
+        $lines = [];
+        if (! empty($patient['name'])) {
+            $lines[] = 'Nome: ' . $patient['name'];
+        }
+        if (! empty($patient['age'])) {
+            $lines[] = 'Idade: ' . $patient['age'] . ' anos';
+        }
+        if (! empty($patient['birth_date'])) {
+            $lines[] = 'Data de nascimento: ' . $patient['birth_date'];
+        }
+
+        if (isset($metadata['patient'])) {
+            $patientMeta = $metadata['patient'];
+            if (is_array($patientMeta)) {
+                foreach ($patientMeta as $key => $value) {
+                    if (is_scalar($value) && $value !== '') {
+                        $label = strtoupper(str_replace('_', ' ', (string) $key));
+                        $lines[] = "{$label}: {$value}";
+                    }
+                }
+            }
+        }
+
+        if (empty($lines)) {
+            $lines[] = 'Dados cadastrais indisponíveis no prontuário.';
+        }
+
+        return 'PACIENTE:' . "\n" . implode("\n", $lines);
+    }
+
+    private function formatMetadataBlock(array $metadata): ?string
+    {
+        if (empty($metadata)) {
+            return null;
+        }
+
+        $encoded = json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        return $encoded ? "INSIGHTS_ANAMNESE:\n{$encoded}" : null;
+    }
+
+    private function normalizeReviewStatus(?string $status): string
+    {
+        $map = [
+            'safe' => 'safe',
+            'ok' => 'safe',
+            'green' => 'safe',
+            'attention' => 'attention',
+            'alert' => 'attention',
+            'warning' => 'attention',
+            'risk' => 'risk',
+            'danger' => 'risk',
+            'critical' => 'risk',
+        ];
+
+        $normalized = strtolower((string) $status);
+        return $map[$normalized] ?? 'attention';
+    }
+
+    private function normalizeAlertSeverity(?string $severity): string
+    {
+        $normalized = strtolower((string) $severity);
+        return match ($normalized) {
+            'low', 'leve' => 'low',
+            'high', 'grave', 'critical' => 'high',
+            default => 'medium',
+        };
+    }
+
+    private function normalizeAlertType(?string $type): string
+    {
+        $normalized = strtolower((string) $type);
+        $allowed = ['dosage', 'interaction', 'allergy', 'contraindication', 'missing_info', 'other'];
+
+        return in_array($normalized, $allowed, true) ? $normalized : 'other';
+    }
+
     private function chunkTranscriptByWords(string $text, int $maxWords): array
     {
         $normalized = trim(preg_replace('/\s+/', ' ', $text));

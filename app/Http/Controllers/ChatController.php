@@ -44,14 +44,14 @@ class ChatController extends Controller
 
         if ($messages->isEmpty()) {
             throw ValidationException::withMessages([
-                'messages' => 'Conversa invÇ­lida. Envie ao menos uma mensagem do mÇ¸dico.',
+                'messages' => 'Conversa inválida. Envie ao menos uma mensagem do médico.',
             ]);
         }
 
         $latest = $messages->last();
         if ($latest['role'] !== 'user') {
             throw ValidationException::withMessages([
-                'messages' => 'A Ç§ltima mensagem precisa ser do mÇ¸dico.',
+                'messages' => 'A última mensagem precisa ser do médico.',
             ]);
         }
 
@@ -64,7 +64,7 @@ class ChatController extends Controller
             report($exception);
 
             return response()->json([
-                'message' => 'Falha ao gerar resposta do assistente clÇðnico.',
+                'message' => 'Falha ao gerar resposta do assistente clínico.',
             ], 502);
         }
 

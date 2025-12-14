@@ -35,6 +35,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/consultations/{id}/documents', [DocumentController::class, 'index']);
     Route::post('/consultations/{id}/documents', [DocumentController::class, 'store']);
     Route::patch('/consultations/{id}/documents', [DocumentController::class, 'patch']);
+    Route::post('/consultations/{id}/documents/review', [DocumentController::class, 'review']);
     Route::put('/documents/{id}', [DocumentController::class, 'update']);
 
     // AI helpers
