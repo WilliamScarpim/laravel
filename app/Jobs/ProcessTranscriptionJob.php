@@ -341,6 +341,7 @@ class ProcessTranscriptionJob implements ShouldQueue
 
         return "{$current}\n\n---\n\n{$header}\n\n{$segment}";
     }
+
     private function normalizeAnamnesisMarkdown(?string $text): string
     {
         $value = trim((string) $text);
@@ -353,10 +354,10 @@ class ProcessTranscriptionJob implements ShouldQueue
 
         foreach (self::ANAMNESIS_SECTIONS as $section) {
             $pattern = sprintf(
-                '/(^|\n)\s*(?:#{1,3}\s*)?(?:\*\*|__)?%s(?:\*\*|__)?\s*(?:[:])?/imu',
+                '/(^|\n)\s*(?:#{1,3}\s*)?(?:\*\*|__)?%s(?:\*\*|__)?\s*(?:[:\x{FF1A}\-‒–—])?\s*/imu',
                 preg_quote($section, '/')
             );
-            $replacement = "\n\n## {$section}";
+            $replacement = "\n\n## {$section}\n";
             $value = preg_replace($pattern, $replacement, $value);
         }
 
