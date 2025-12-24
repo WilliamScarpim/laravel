@@ -15,22 +15,15 @@ php artisan cache:clear
 Editar template email 2FA.
 
 
-Ao invés de chamar de MEDICO, alterar para PROFISSIONAL, porque pode ser utilizado por fisiotraputas, psicologos, nutricionistas etc.
 
-
-
-
-Substituir RECEITA por PRESCRIÇÃO
 
 INTEGRAR COM memed OU CFM?
 
-Por se tratar de um ambiente que trabalha com dados pessoais de paciente, pensar na melor forma de criptografar o conteudo das consultas no banco de dados, que dificulte o acesso caso alguem tenha acesso ao banco de dados, mas que continue sendo pesquisável.
+Por se tratar de um ambiente que trabalha com dados pessoais de paciente, pensar na melhor forma de criptografar o conteudo das consultas no banco de dados, que dificulte o acesso caso alguem tenha acesso ao banco de dados, mas que continue sendo pesquisável.
 
-Como o sistema não será certificado NGS2 (CFM), não pode "eliminar o uso do papel". Deixar isso claro no rodapé da pagina do prontuário, em letras menores, que o sistema é um ferramenta que auxilia, mas tem que não substitui as regras de arquivamento de prontuário do CFM. Após terminar o Prontuário, o medico tem opção de imprimir todo porntuário (anamnese), transcrição, e documentos anexos (receituario, atestado etc).
 
 Check List LGPD: https://chatgpt.com/c/693e6093-02a8-8330-b16f-68728c692c25
 
-Criar auto teste de segurança em laravel.
 
 Procurar pro vunerabilidades.
 

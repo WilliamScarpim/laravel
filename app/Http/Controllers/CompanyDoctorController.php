@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Specialty;
 use App\Models\User;
+use App\Services\AccountActivationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -11,6 +12,10 @@ use Illuminate\Support\Str;
 
 class CompanyDoctorController extends Controller
 {
+    public function __construct(private readonly AccountActivationService $activationService)
+    {
+    }
+
     public function index(Request $request): JsonResponse
     {
         $company = $request->user();
@@ -60,9 +65,11 @@ class CompanyDoctorController extends Controller
             'specialty_id' => $specialty?->id,
             'rqe' => $specialty ? $data['rqe'] ?? null : null,
             'company_id' => $company->id,
+            'is_active' => false,
         ]);
 
         $doctor->load('specialtyRelation');
+        $this->activationService->send($doctor);
 
         return response()->json([
             'doctor' => $this->transformDoctor($doctor),

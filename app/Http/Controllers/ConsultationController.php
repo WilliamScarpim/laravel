@@ -24,7 +24,7 @@ class ConsultationController extends Controller
 
     public function index(Request $request)
     {
-        $query = Consultation::with(['patient', 'doctor.specialtyRelation', 'pendingJob', 'latestJob'])
+        $query = Consultation::with(['patient', 'doctor.specialtyRelation', 'pendingJob', 'latestJob', 'company'])
             ->withCount('anamnesisVersions')
             ->withMax('anamnesisVersions as anamnesis_version', 'version')
             ->orderByDesc('date')
@@ -33,6 +33,11 @@ class ConsultationController extends Controller
         $user = $request->user();
         if ($user && $user->isDoctor()) {
             $query->where('doctor_id', $user->id);
+        } elseif ($user && $user->isCompany()) {
+            $query->where(function ($q) use ($user) {
+                $q->where('company_id', $user->id)
+                    ->orWhereHas('doctor', fn ($dq) => $dq->where('company_id', $user->id));
+            });
         }
 
         $perPage = max(5, min(100, (int) $request->query('perPage', 20)));
@@ -79,6 +84,7 @@ class ConsultationController extends Controller
             'documents',
             'pendingJob',
             'latestJob',
+            'company',
         ])
             ->withCount('anamnesisVersions')
             ->withMax('anamnesisVersions as anamnesis_version', 'version')
@@ -95,6 +101,10 @@ class ConsultationController extends Controller
 
     public function store(Request $request)
     {
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas nÃ£o podem criar prontuÃ¡rios.');
+        }
+
         $data = $request->validate([
             'consultationId' => ['nullable', 'string'],
             'patientId' => ['required', 'string', 'exists:patients,id'],
@@ -110,6 +120,7 @@ class ConsultationController extends Controller
         $patient = Patient::findOrFail($data['patientId']);
         $status = $data['status'] ?? 'transcription';
         $step = $data['currentStep'] ?? 'transcription';
+        $companyId = $request->user()?->company_id;
 
         if (! empty($data['consultationId'])) {
             $consultation = Consultation::findOrFail($data['consultationId']);
@@ -117,6 +128,7 @@ class ConsultationController extends Controller
             $consultation->fill([
                 'patient_id' => $patient->id,
                 'doctor_id' => $request->user()->id,
+                'company_id' => $companyId ?? $consultation->company_id,
                 'transcription' => $data['transcription'] ?? $consultation->transcription,
                 'anamnesis' => $data['anamnesis'] ?? $consultation->anamnesis,
                 'summary' => $data['summary'] ?? $consultation->summary,
@@ -141,6 +153,7 @@ class ConsultationController extends Controller
             $consultation = Consultation::create([
                 'patient_id' => $patient->id,
                 'doctor_id' => $request->user()->id,
+                'company_id' => $companyId,
                 'date' => Carbon::now()->toDateString(),
                 'transcription' => $data['transcription'] ?? null,
                 'anamnesis' => $data['anamnesis'] ?? null,
@@ -156,13 +169,17 @@ class ConsultationController extends Controller
             }
         }
 
-        $consultation->load(['patient', 'doctor']);
+        $consultation->load(['patient', 'doctor', 'company']);
 
         return response()->json(['data' => $this->transform($consultation)], 201);
     }
 
     public function update(Request $request, string $id)
     {
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas nÃ£o podem alterar prontuÃ¡rios.');
+        }
+
         $consultation = Consultation::findOrFail($id);
         $this->authorizeConsultationAccess($request->user(), $consultation);
         $data = $request->validate([
@@ -200,13 +217,17 @@ class ConsultationController extends Controller
             }
         }
 
-        $consultation->load(['patient', 'doctor']);
+        $consultation->load(['patient', 'doctor', 'company']);
 
         return response()->json(['data' => $this->transform($consultation)]);
     }
 
     public function complete(Request $request, string $id)
     {
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas nÃ£o podem encerrar prontuÃ¡rios.');
+        }
+
         $consultation = Consultation::findOrFail($id);
         $this->authorizeConsultationAccess($request->user(), $consultation);
         $original = $consultation->getOriginal();
@@ -220,13 +241,17 @@ class ConsultationController extends Controller
 
         $this->auditService->record($consultation, $original, (string) $request->user()->id, 'complete');
 
-        $consultation->load(['patient', 'doctor']);
+        $consultation->load(['patient', 'doctor', 'company']);
 
         return response()->json(['data' => $this->transform($consultation)]);
     }
 
     public function destroy(Request $request, string $id)
     {
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas nÃ£o podem remover prontuÃ¡rios.');
+        }
+
         $consultation = Consultation::with(['documents.versions', 'anamnesisVersions', 'auditLogs', 'jobs'])
             ->findOrFail($id);
         $this->authorizeConsultationAccess($request->user(), $consultation);
@@ -272,6 +297,10 @@ class ConsultationController extends Controller
                 'crm' => $consultation->doctor->crm,
                 'specialty' => $consultation->doctor->specialtyRelation?->name ?? $consultation->doctor->specialty,
                 'specialtyId' => $consultation->doctor->specialtyRelation?->id,
+            ] : null,
+            'company' => $consultation->company ? [
+                'id' => (string) $consultation->company->id,
+                'name' => $consultation->company->name,
             ] : null,
             'date' => optional($consultation->date)->format('Y-m-d'),
             'transcription' => $consultation->transcription,
@@ -396,7 +425,11 @@ class ConsultationController extends Controller
         }
 
         if ($user->isDoctor() && (string) $consultation->doctor_id !== (string) $user->id) {
-            abort(403, 'Prontuário pertence a outro médico.');
+            abort(403, 'Prontuário pertence a outro profissional.');
+        }
+
+        if ($user->isCompany() && (string) $consultation->company_id !== (string) $user->id) {
+            abort(403, 'Prontuário pertence a outra empresa.');
         }
     }
 }

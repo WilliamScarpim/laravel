@@ -128,8 +128,8 @@ class ProcessTranscriptionJob implements ShouldQueue
             }
 
             if ($notesBlock !== '' && $anamnesisText) {
-                $anamnesisText .= "\n\n**Notas complementares do m??dico:**\n{$notesBlock}";
-            }
+            $anamnesisText .= "\n\n**Notas complementares do profissional:**\n{$notesBlock}";
+        }
 
             $metadata = $consultation->metadata ?? [];
             $existingFlags = is_array($metadata['flags'] ?? null) ? $metadata['flags'] : [];
@@ -322,10 +322,10 @@ class ProcessTranscriptionJob implements ShouldQueue
         }
 
         if ($transcript === '') {
-            return "## Notas do médico\n{$notesBlock}";
+            return "## Notas do profissional\n{$notesBlock}";
         }
 
-        return "{$transcript}\n\n## Notas do médico\n{$notesBlock}";
+        return "{$transcript}\n\n## Notas do profissional\n{$notesBlock}";
     }
 
     private function appendAdditionalTranscription(Consultation $consultation, string $segment): string

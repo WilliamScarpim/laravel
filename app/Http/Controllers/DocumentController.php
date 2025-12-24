@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Consultation;
 use App\Models\Document;
+use App\Models\User;
 use App\Services\AiAnamnesisService;
 use App\Services\ConsultationAuditService;
 use App\Services\DocumentVersionService;
@@ -20,9 +21,10 @@ class DocumentController extends Controller
     ) {
     }
 
-    public function index(string $consultationId)
+    public function index(Request $request, string $consultationId)
     {
         $consultation = Consultation::findOrFail($consultationId);
+        $this->authorizeConsultation($request->user(), $consultation);
         $documents = $consultation->documents()->orderByDesc('created_at')->get();
 
         return response()->json([
@@ -33,6 +35,10 @@ class DocumentController extends Controller
     public function store(Request $request, string $consultationId)
     {
         $consultation = Consultation::findOrFail($consultationId);
+        $this->authorizeConsultation($request->user(), $consultation);
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas não podem editar documentos.');
+        }
         $this->assertDocumentsAreEditable($consultation);
 
         $data = $request->validate([
@@ -56,6 +62,10 @@ class DocumentController extends Controller
     public function patch(Request $request, string $consultationId)
     {
         $consultation = Consultation::findOrFail($consultationId);
+        $this->authorizeConsultation($request->user(), $consultation);
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas não podem editar documentos.');
+        }
         $this->assertDocumentsAreEditable($consultation);
 
         $data = $request->validate([
@@ -107,6 +117,10 @@ class DocumentController extends Controller
     public function review(Request $request, string $consultationId)
     {
         $consultation = Consultation::with('patient')->findOrFail($consultationId);
+        $this->authorizeConsultation($request->user(), $consultation);
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas não podem revisar documentos.');
+        }
 
         $data = $request->validate([
             'type' => ['required', 'string'],
@@ -154,6 +168,10 @@ class DocumentController extends Controller
         $doc = Document::findOrFail($id);
         $doc->loadMissing('consultation');
         $consultation = $doc->consultation ?? Consultation::findOrFail($doc->consultation_id);
+        $this->authorizeConsultation($request->user(), $consultation);
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas não podem editar documentos.');
+        }
         $this->assertDocumentsAreEditable($consultation);
 
         $data = $request->validate([
@@ -234,5 +252,20 @@ class DocumentController extends Controller
         }
 
         return $consultation->completed_at->lt(now()->subDay());
+    }
+
+    private function authorizeConsultation(?User $user, Consultation $consultation): void
+    {
+        if (! $user) {
+            abort(401);
+        }
+
+        if ($user->isDoctor() && (string) $consultation->doctor_id !== (string) $user->id) {
+            abort(403, 'Prontuário pertence a outro profissional.');
+        }
+
+        if ($user->isCompany() && (string) $consultation->company_id !== (string) $user->id) {
+            abort(403, 'Prontuário pertence a outra empresa.');
+        }
     }
 }

@@ -19,6 +19,7 @@ Route::post('/companies', [CompanyController::class, 'store']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/login/verify', [AuthController::class, 'verifyTwoFactor']);
 Route::post('/register', [RegistrationController::class, 'store']);
+Route::post('/activate', [RegistrationController::class, 'activate']);
 Route::get('/specialties', [SpecialtyController::class, 'index']);
 Route::post('/login/resend', [AuthController::class, 'resendTwoFactor']);
 
@@ -33,7 +34,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/doctors', [CompanyDoctorController::class, 'store']);
         });
 
-    Route::middleware('role:doctor,admin')->group(function () {
+    Route::middleware('role:doctor,admin,company')->group(function () {
         // Patients
         Route::get('/patients/search', [PatientController::class, 'search']);
         Route::post('/patients', [PatientController::class, 'store']);

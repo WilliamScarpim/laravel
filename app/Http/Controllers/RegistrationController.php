@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Specialty;
 use App\Models\User;
+use App\Models\UserActivationToken;
+use App\Services\AccountActivationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -11,6 +13,10 @@ use Illuminate\Support\Str;
 
 class RegistrationController extends Controller
 {
+    public function __construct(private readonly AccountActivationService $activationService)
+    {
+    }
+
     public function store(Request $request): JsonResponse
     {
         if ($request->filled('crm')) {
@@ -42,7 +48,7 @@ class RegistrationController extends Controller
             'email' => $data['email'],
             'password' => Hash::make($data['password']),
             'role' => $data['role'],
-            'is_active' => true,
+            'is_active' => false,
         ];
 
         if ($data['role'] === 'doctor') {
@@ -54,9 +60,10 @@ class RegistrationController extends Controller
         }
 
         $user = User::create($attributes);
+        $this->activationService->send($user);
 
         return response()->json([
-            'message' => 'Conta criada com sucesso. Verifique seu e-mail para ativar a autenticação.',
+            'message' => 'Conta criada. Enviamos um e-mail para ativação.',
             'user' => [
                 'id' => (string) $user->id,
                 'name' => $user->name,
@@ -64,5 +71,40 @@ class RegistrationController extends Controller
                 'role' => $user->role,
             ],
         ], 201);
+    }
+
+    public function activate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string'],
+        ]);
+
+        /** @var UserActivationToken|null $record */
+        $record = UserActivationToken::with('user')
+            ->where('token', $data['token'])
+            ->first();
+
+        if (! $record || ! $record->isValid()) {
+            return response()->json([
+                'message' => 'Token inválido ou expirado.',
+            ], 422);
+        }
+
+        $user = $record->user;
+        if (! $user) {
+            return response()->json([
+                'message' => 'Usuário não encontrado para ativação.',
+            ], 404);
+        }
+
+        $user->is_active = true;
+        $user->email_verified_at = now();
+        $user->save();
+
+        $record->forceFill(['used_at' => now()])->save();
+
+        return response()->json([
+            'message' => 'Conta ativada com sucesso.',
+        ]);
     }
 }

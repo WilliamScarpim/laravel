@@ -4,6 +4,8 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Models\Consultation;
+use App\Models\UserActivationToken;
+use App\Models\UserAuditLog;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -76,6 +78,16 @@ class User extends Authenticatable
     public function specialtyRelation(): BelongsTo
     {
         return $this->belongsTo(Specialty::class, 'specialty_id');
+    }
+
+    public function auditLogs(): HasMany
+    {
+        return $this->hasMany(UserAuditLog::class);
+    }
+
+    public function activationTokens(): HasMany
+    {
+        return $this->hasMany(UserActivationToken::class);
     }
 
     public function isCompany(): bool

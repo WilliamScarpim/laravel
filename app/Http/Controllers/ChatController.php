@@ -44,14 +44,14 @@ class ChatController extends Controller
 
         if ($messages->isEmpty()) {
             throw ValidationException::withMessages([
-                'messages' => 'Conversa inválida. Envie ao menos uma mensagem do médico.',
+                'messages' => 'Conversa inválida. Envie ao menos uma mensagem do profissional.',
             ]);
         }
 
         $latest = $messages->last();
         if ($latest['role'] !== 'user') {
             throw ValidationException::withMessages([
-                'messages' => 'A última mensagem precisa ser do médico.',
+                'messages' => 'A última mensagem precisa ser do profissional.',
             ]);
         }
 

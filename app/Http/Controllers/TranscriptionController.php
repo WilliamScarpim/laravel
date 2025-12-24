@@ -18,6 +18,10 @@ class TranscriptionController extends Controller
 
     public function transcribe(Request $request)
     {
+        if ($request->user()?->isCompany()) {
+            abort(403, 'Empresas não podem enviar gravações.');
+        }
+
         $validated = $request->validate([
             'audio' => ['required', 'file'],
             'consultation_id' => ['required', 'string', 'exists:consultations,id'],

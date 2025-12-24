@@ -40,7 +40,7 @@ class AuthController extends Controller
 
         if (! $user->is_active) {
             throw ValidationException::withMessages([
-                'email' => ['Conta desativada. Entre em contato com o suporte.'],
+                'email' => ['Conta inativa. Confira o e-mail de ativaÃ§Ã£o ou contate o suporte.'],
             ]);
         }
 
@@ -156,8 +156,49 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
+        /** @var User $user */
+        $user = $request->user();
+
+        if ($request->isMethod('patch')) {
+            $rules = [
+                'name' => ['sometimes', 'string', 'max:255'],
+                'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            ];
+
+            if ($user->isDoctor()) {
+                $rules['crm'] = ['sometimes', 'string', 'max:20'];
+                $rules['rqe'] = ['sometimes', 'nullable', 'string', 'max:30'];
+            }
+
+            $data = $request->validate($rules);
+            $before = $user->only(array_keys($data));
+
+            if (array_key_exists('name', $data)) {
+                $user->name = $data['name'];
+            }
+
+            if (array_key_exists('email', $data)) {
+                $user->email = $data['email'];
+            }
+
+            if ($user->isDoctor()) {
+                if (array_key_exists('crm', $data)) {
+                    $user->crm = Str::upper(trim((string) $data['crm']));
+                }
+                if (array_key_exists('rqe', $data)) {
+                    $user->rqe = $data['rqe'] ?? null;
+                }
+            }
+
+            $dirty = $user->getDirty();
+            if (! empty($dirty)) {
+                $user->save();
+                app(\App\Services\UserAuditService::class)->record($user, $before, $user);
+            }
+        }
+
         return response()->json([
-            'user' => $this->transformUser($request->user()),
+            'user' => $this->transformUser($user->fresh()),
         ]);
     }
 
